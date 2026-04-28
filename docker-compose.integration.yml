@@ -1,0 +1,20 @@
+# Docker Compose Override for Integration Testing
+# This file overrides the base docker-compose.yml to use real NodeJS GraphQL instead of mock
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.integration.yml up
+
+version: '3.8'
+
+services:
+  storedesk-ai:
+    environment:
+      # Point to real NodeJS GraphQL endpoint instead of mock server
+      - NODEJS_GRAPHQL_URL=http://nodejs:4010/graphql
+    # Remove dependency on mock server since we're using real NodeJS
+    depends_on:
+      - redis
+      - nodejs
+
+  # Keep mock server running for manual testing but AI service won't use it
+  storedesk-mock-server:
+    profiles:
+      - mock-only  # Only start with --profile mock-only

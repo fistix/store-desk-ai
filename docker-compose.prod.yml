@@ -1,0 +1,113 @@
+# Production Docker Compose
+# This file is optimized for production deployment without source code mounting
+# Usage: docker-compose -f docker-compose.prod.yml --env-file .env.production up -d
+
+services:
+  # Redis for session management (starts first)
+  redis:
+    image: redis:7-alpine
+    networks:
+      - storedesk-network
+    restart: always
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # StoreDesk AI (Production)
+  storedesk-ai:
+    build:
+      context: ./storedesk-ai
+      dockerfile: Dockerfile.prod
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - ENVIRONMENT=production
+      - DEBUG_ENDPOINTS_ENABLED=false
+      - HMAC_SECRET=${HMAC_SECRET}
+      - NODEJS_GRAPHQL_URL=http://nodejs:4010/graphql
+      - SERVICE_ACCOUNT_KEY=${SERVICE_ACCOUNT_KEY}
+      - REDIS_URL=redis://redis:6379
+      # LLM Provider Keys (from environment variables)
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
+      # STT Configuration
+      - WHISPER_MODEL_SIZE=base
+      # Limits
+      - SESSION_TTL_SECONDS=7200
+      - MAX_HISTORY_TURNS=20
+      - PROVIDER_BACKOFF_SECONDS=300
+      - REQUEST_MAX_ITERATIONS=5
+    networks:
+      - storedesk-network
+    depends_on:
+      - redis
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # NodeJS Backend (Production)
+  nodejs:
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    ports:
+      - "4010:4010"
+    environment:
+      - NODE_ENV=production
+      - PORT=4010
+      - STOREDESK_AI_URL=http://storedesk-ai:8000
+      - STOREDESK_AI_HMAC_SECRET=${STOREDESK_AI_HMAC_SECRET}
+      - STOREDESK_AI_SERVICE_KEY=${STOREDESK_AI_SERVICE_KEY}
+      - STOREDESK_AI_ALLOWED_MUTATIONS=updateBulkStockMonitoringCommand,updateBulkPriceMonitoringCommand
+      - STOREDESK_AI_RATE_LIMIT_PER_USER=30
+      - STOREDESK_AI_RATE_LIMIT_WINDOW_SECONDS=60
+    networks:
+      - storedesk-network
+    depends_on:
+      - redis
+      - storedesk-ai
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4010/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # NextJS Test Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_STOREDESK_TEST_ENABLED=true
+      - NEXT_PUBLIC_TEST_CONNECTOR_ID=test-connector-123
+      - NEXT_PUBLIC_BACKEND_URL=http://localhost:4010
+    networks:
+      - storedesk-network
+    depends_on:
+      - nodejs
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  storedesk-network:
+    driver: bridge
+
+volumes:
+  redis_data:

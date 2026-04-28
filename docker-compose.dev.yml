@@ -1,0 +1,30 @@
+# Development Docker Compose with Hot Reloading
+# This file mounts source code volumes for live development
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+version: '3.8'
+
+services:
+  nodejs:
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    command: ["nodemon", "app.js"]
+
+  storedesk-ai:
+    volumes:
+      - ./storedesk-ai:/app
+      - /app/__pycache__
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  storedesk-mock-server:
+    volumes:
+      - ./storedesk-mock-server:/app
+      - /app/node_modules
+    command: ["nodemon", "index.js"]
+
+  frontend:
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next

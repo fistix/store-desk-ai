@@ -1,0 +1,33 @@
+providers:
+  - name: gemini
+    model: gemini-2.0-flash
+    priority: 1
+    api_key_env: GEMINI_API_KEY
+    supports_tool_calling: true
+    limit_type: requests_per_day
+    limit: 1500
+    reset: midnight_utc
+
+  - name: groq
+    model: llama-3.3-70b-versatile
+    priority: 2
+    api_key_env: GROQ_API_KEY
+    supports_tool_calling: true
+    limit_type: requests_per_day
+    limit: 14400
+    reset: midnight_utc
+
+  - name: openai
+    model: gpt-4o-mini
+    priority: 3
+    api_key_env: OPENAI_API_KEY
+    supports_tool_calling: true
+    limit_type: none
+
+  - name: ollama
+    model: llama3.2
+    priority: 4
+    api_key_env: null
+    base_url_env: OLLAMA_BASE_URL
+    supports_tool_calling: partial
+    limit_type: none

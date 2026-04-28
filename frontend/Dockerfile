@@ -1,0 +1,23 @@
+FROM node:18-alpine
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies
+RUN npm install
+
+# Copy application code
+COPY . .
+
+# Create .env file if it doesn't exist
+RUN if [ ! -f .env ]; then \
+    echo "NEXT_PUBLIC_STOREDESK_TEST_ENABLED=true" >> .env && \
+    echo "NEXT_PUBLIC_TEST_CONNECTOR_ID=test-connector-123" >> .env && \
+    echo "NEXT_PUBLIC_BACKEND_URL=http://nodejs:4010" >> .env; \
+  fi
+
+EXPOSE 3000
+
+CMD ["npm", "run", "dev"]

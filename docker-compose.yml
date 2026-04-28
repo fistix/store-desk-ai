@@ -1,0 +1,108 @@
+version: '3.8'
+
+services:
+  # Existing NodeJS Backend (modified)
+  nodejs:
+    build: ./backend
+    ports:
+      - "4010:4010"
+    environment:
+      - NODE_ENV=development
+      - PORT=4010
+      - STOREDESK_AI_URL=http://storedesk-ai:8000
+      - STOREDESK_AI_HMAC_SECRET=test-hmac-secret-change-in-production
+      - STOREDESK_AI_SERVICE_KEY=8c75e2f69324d2719c3664d55734268e3f9468045610787a250325b8ef6c4e0b
+      - STOREDESK_AI_ALLOWED_MUTATIONS=updateBulkStockMonitoringCommand,updateBulkPriceMonitoringCommand
+      - STOREDESK_AI_RATE_LIMIT_PER_USER=30
+      - STOREDESK_AI_RATE_LIMIT_WINDOW_SECONDS=60
+    networks:
+      - storedesk-network
+    depends_on:
+      - storedesk-ai
+      - redis
+
+  # StoreDesk AI Python Microservice
+  storedesk-ai:
+    build: ./storedesk-ai
+    environment:
+      - PORT=8000
+      - ENVIRONMENT=development
+      - DEBUG_ENDPOINTS_ENABLED=true
+      - HMAC_SECRET=test-hmac-secret-change-in-production
+      - NODEJS_GRAPHQL_URL=http://storedesk-mock-server:4010/graphql
+      - SERVICE_ACCOUNT_KEY=test-service-key-change-in-production
+      - REDIS_URL=redis://redis:6379
+      # LLM Provider Keys (optional - service works with what's configured)
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OLLAMA_BASE_URL=http://ollama:11434
+      # STT Configuration
+      - WHISPER_MODEL_SIZE=base
+      # Limits
+      - SESSION_TTL_SECONDS=7200
+      - MAX_HISTORY_TURNS=20
+      - PROVIDER_BACKOFF_SECONDS=300
+      - REQUEST_MAX_ITERATIONS=5
+    networks:
+      - storedesk-network
+    depends_on:
+      - redis
+      - storedesk-mock-server
+    restart: unless-stopped
+
+  # Mock GraphQL Server (for development/testing)
+  storedesk-mock-server:
+    build: ./storedesk-mock-server
+    environment:
+      - PORT=4010
+      - MOCK_SERVICE_KEY=test-service-key-change-in-production
+      - MOCK_SCENARIO=happy_path
+      - MOCK_SLOW_RESPONSE_MS=3000
+    networks:
+      - storedesk-network
+    restart: unless-stopped
+
+  # Redis for session management
+  redis:
+    image: redis:7-alpine
+    networks:
+      - storedesk-network
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+
+  # Optional: Ollama for local LLM
+  # ollama:
+  #   image: ollama/ollama
+  #   networks:
+  #     - storedesk-network
+  #   restart: unless-stopped
+  #   volumes:
+  #     - ollama_data:/root/.ollama
+  #   # Uncomment ports if you want to access Ollama directly
+  #   # ports:
+  #   #   - "11434:11434"
+
+  # NextJS Test Frontend
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_STOREDESK_TEST_ENABLED=true
+      - NEXT_PUBLIC_TEST_CONNECTOR_ID=test-connector-123
+      - NEXT_PUBLIC_BACKEND_URL=http://localhost:4010
+    networks:
+      - storedesk-network
+    depends_on:
+      - nodejs
+    restart: unless-stopped
+
+networks:
+  storedesk-network:
+    driver: bridge
+
+volumes:
+  redis_data:
+  # ollama_data:
