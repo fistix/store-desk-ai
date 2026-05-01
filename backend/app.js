@@ -20,7 +20,8 @@ app.use((req, res, next) => {
     }
 });
 
-app.use(bodyParser.json());
+app.use(bodyParser.json({ limit: '50mb' }));
+app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
 
 // 1.2 New AI Gateway Endpoint
 // In real app, there would be JWT middleware here

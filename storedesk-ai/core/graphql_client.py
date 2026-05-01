@@ -1,6 +1,8 @@
+import os
 import httpx
 import json
-import time
+import hashlib
+from typing import Dict, Any, Optional
 from config.settings import settings
 from fastapi import HTTPException
 from httpx import AsyncClient, ConnectError, HTTPStatusError
@@ -21,11 +23,15 @@ class GraphQLClient:
 
         headers = {
             "Content-Type": "application/json",
-            "X-Service-Key": self.service_key,
+            "X-Service-Key": self.service_key,  # Send plain key, middleware will hash it
             "X-User-Id": user_context.get("user_id"),
             "X-Tenant-Id": user_context.get("tenant_id"),
             "X-Connector-Id": user_context.get("connector_id"),
         }
+        
+        # Debug logging
+        print(f"[GRAPHQL_CLIENT] 🔑 Service key: {self.service_key}")
+        print(f"[GRAPHQL_CLIENT] 🔑 Headers: {headers}")
 
         attempts = 0
         max_attempts = 3

@@ -49,8 +49,10 @@ async def assist_endpoint(assist_request: AssistRequest, user_context: UserConte
     # Process input
     if assist_request.inputType == "audio" and assist_request.audioBase64:
         print("[GATEWAY] 🎵 Processing audio input...")
+        # Log audio length for debugging
+        audio_bytes = base64.b64decode(assist_request.audioBase64)
+        print(f"[GATEWAY] 🎵 Audio length: {len(audio_bytes)} bytes")
         try:
-            audio_bytes = base64.b64decode(assist_request.audioBase64)
             message_content = await transcribe_audio(audio_bytes)
             print(f"[GATEWAY] 🎤 Transcribed: '{message_content[:100]}{'...' if len(message_content) > 100 else ''}'")
         except Exception as e:
@@ -127,7 +129,7 @@ async def assist_endpoint(assist_request: AssistRequest, user_context: UserConte
         # If confirmation was resolved and tool executed, clear pending confirmation from Redis
         print("[GATEWAY] 🧹 Clearing pending confirmation from Redis after execution...")
         await session_manager.clear_pending_confirmation(session_id)
-    elif orchestrator_result.get("finalResponse") and isinstance(orchestrator_result["finalResponse"], dict) and "Action cancelled." in orchestrator_result["finalResponse"].get("message", ""):
+    elif orchestrator_result.get("finalResponse") and isinstance(orchestrator_result["finalResponse"], dict) and orchestrator_result["finalResponse"].get("message") and "Action cancelled." in orchestrator_result["finalResponse"].get("message", ""):
         # If user cancelled, clear pending confirmation from Redis
         print("[GATEWAY] 🧹 Clearing pending confirmation from Redis after cancellation...")
         await session_manager.clear_pending_confirmation(session_id)

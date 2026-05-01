@@ -21,6 +21,9 @@ class AgentState(TypedDict):
     finalResponse: Optional[Dict[str, Any]]
     clarificationQuestion: Optional[str]
     requiresConfirmation: bool
+    routing_decision: Optional[str]
+    matched_keywords: List[str]
+    intent_confidence: float
 
 class BaseAgent(ABC):
     def __init__(self, name: str, description: str, system_prompt: str, tool_registry: Dict[str, Type[BaseTool]]):

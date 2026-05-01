@@ -2,6 +2,7 @@ import uvicorn
 from fastapi import FastAPI
 from core.gateway import router as gateway_router
 from core.stt import load_whisper_model
+from api.voice_to_text import router as voice_to_text_router
 from config.settings import settings
 
 app = FastAPI(
@@ -17,6 +18,7 @@ async def startup_event():
     print("StoreDesk AI service started.")
 
 app.include_router(gateway_router)
+app.include_router(voice_to_text_router)
 
 if __name__ == "__main__":
     uvicorn.run(

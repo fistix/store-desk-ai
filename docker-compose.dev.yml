@@ -1,30 +1,103 @@
 # Development Docker Compose with Hot Reloading
 # This file mounts source code volumes for live development
-# Usage: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
-
-version: '3.8'
+# Usage: docker compose -f docker-compose.dev.yml --env-file storedesk-ai/.env.production up --build
 
 services:
-  nodejs:
+  # Redis for session management (starts first)
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
     volumes:
+      - redis-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # StoreDesk AI (Development with Hot Reload)
+  storedesk-ai:
+    build:
+      context: ./storedesk-ai
+      target: development
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount source code for hot reloading
+      - ./storedesk-ai:/app
+      # Mount pip cache to persist packages
+      - pip-cache:/root/.cache/pip
+    environment:
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+      - UVICORN_RELOAD=1
+    env_file:
+      - ./.env.dev
+    restart: unless-stopped
+    depends_on:
+      - redis
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # NodeJS Backend (Development with Hot Reload)
+  nodejs:
+    build: 
+      context: ./backend
+      target: development
+    ports:
+      - "4010:4010"
+    volumes:
+      # Mount source code for hot reloading
       - ./backend:/app
       - /app/node_modules
-    command: ["nodemon", "app.js"]
+    command: ["npm", "run", "dev"]
+    env_file:
+      - ./.env.dev
+    environment:
+      - PORT=4010
+    restart: unless-stopped
+    depends_on:
+      - redis
+      - storedesk-ai
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4010/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
-  storedesk-ai:
-    volumes:
-      - ./storedesk-ai:/app
-      - /app/__pycache__
-    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
-
-  storedesk-mock-server:
-    volumes:
-      - ./storedesk-mock-server:/app
-      - /app/node_modules
-    command: ["nodemon", "index.js"]
-
+  # NextJS Frontend (Development with Hot Reload)
   frontend:
+    build:
+      context: ./frontend
+      target: development
+    ports:
+      - "3000:3000"
     volumes:
+      # Mount source code for hot reloading
       - ./frontend:/app
       - /app/node_modules
       - /app/.next
+    command: ["npm", "run", "dev"]
+    environment:
+      - NEXT_PUBLIC_STOREDESK_TEST_ENABLED=true
+      - NEXT_PUBLIC_TEST_CONNECTOR_ID=test-connector-123
+      - NEXT_PUBLIC_BACKEND_URL=http://localhost:4010
+    restart: unless-stopped
+    depends_on:
+      - nodejs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  pip-cache:
+    driver: local
+  redis-data:
+    driver: local

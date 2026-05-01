@@ -4,16 +4,27 @@ const storedeskServiceKeyAuth = (req, res, next) => {
   const serviceKey = req.header('X-Service-Key');
   const storedHashedKey = process.env.STOREDESK_AI_SERVICE_KEY; // This should be a hash in env
 
+  // Debug logging
+  console.log('[AUTH MIDDLEWARE] 🔑 Incoming service key:', serviceKey);
+  console.log('[AUTH MIDDLEWARE] 🔑 Stored hash:', storedHashedKey);
+  console.log('[AUTH MIDDLEWARE] 🔑 Environment STOREDESK_AI_SERVICE_KEY:', process.env.STOREDESK_AI_SERVICE_KEY);
+
   if (!serviceKey) {
     return res.status(401).json({ error: 'Service key missing' });
   }
 
   // Hash the incoming key to compare with the stored hash
   const incomingHash = crypto.createHash('sha256').update(serviceKey).digest('hex');
+  console.log('[AUTH MIDDLEWARE] 🔑 Incoming hash would be:', incomingHash);
 
   if (incomingHash !== storedHashedKey) {
+    console.log('[AUTH MIDDLEWARE] ❌ Hash mismatch!');
+    console.log('[AUTH MIDDLEWARE] ❌ Expected:', storedHashedKey);
+    console.log('[AUTH MIDDLEWARE] ❌ Got:', incomingHash);
     return res.status(401).json({ error: 'Invalid service key' });
   }
+
+  console.log('[AUTH MIDDLEWARE] ✅ Authentication successful!');
 
   // Validate presence of forwarded user context headers
   const userId = req.header('X-User-Id');

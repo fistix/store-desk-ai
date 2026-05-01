@@ -21,29 +21,13 @@ services:
   storedesk-ai:
     build:
       context: ./storedesk-ai
-      dockerfile: Dockerfile.prod
+      target: production
     ports:
       - "8000:8000"
-    environment:
-      - PORT=8000
-      - ENVIRONMENT=production
-      - DEBUG_ENDPOINTS_ENABLED=false
-      - HMAC_SECRET=${HMAC_SECRET}
-      - NODEJS_GRAPHQL_URL=http://nodejs:4010/graphql
-      - SERVICE_ACCOUNT_KEY=${SERVICE_ACCOUNT_KEY}
-      - REDIS_URL=redis://redis:6379
-      # LLM Provider Keys (from environment variables)
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - GROQ_API_KEY=${GROQ_API_KEY}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
-      # STT Configuration
-      - WHISPER_MODEL_SIZE=base
-      # Limits
-      - SESSION_TTL_SECONDS=7200
-      - MAX_HISTORY_TURNS=20
-      - PROVIDER_BACKOFF_SECONDS=300
-      - REQUEST_MAX_ITERATIONS=5
+    env_file:
+      - ./.env.production
+    volumes:
+      - whisper_cache:/root/.cache/whisper
     networks:
       - storedesk-network
     depends_on:
@@ -59,7 +43,7 @@ services:
   nodejs:
     build: 
       context: ./backend
-      dockerfile: Dockerfile.prod
+      target: production
     ports:
       - "4010:4010"
     environment:
@@ -87,7 +71,7 @@ services:
   frontend:
     build:
       context: ./frontend
-      dockerfile: Dockerfile.prod
+      target: production
     ports:
       - "3000:3000"
     environment:
@@ -111,3 +95,4 @@ networks:
 
 volumes:
   redis_data:
+  whisper_cache:

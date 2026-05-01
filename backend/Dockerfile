@@ -1,22 +1,22 @@
-FROM node:18-alpine
+# Multi-stage Dockerfile - NodeJS Backend
+# Optimized for both development and production builds
 
+FROM node:18-alpine AS base
 WORKDIR /app
 
-# Copy package files
+# Copy package files and install dependencies
 COPY package*.json ./
+RUN npm ci --only=production
 
-# Install dependencies
-RUN npm install
-
-# Copy application code
-COPY . .
-
-# Create .env file if it doesn't exist
-RUN if [ ! -f .env ]; then echo "PORT=4010" > .env; fi
-
-EXPOSE 4010
-
-# Use nodemon for development hot reloading
+# Development stage
+FROM base AS development
 RUN npm install -g nodemon
-
+COPY . .
+EXPOSE 4010
 CMD ["nodemon", "app.js"]
+
+# Production stage
+FROM base AS production
+COPY . .
+EXPOSE 4010
+CMD ["node", "app.js"]

@@ -24,7 +24,9 @@ class ProviderManager:
         gemini_key = os.environ.get('GEMINI_API_KEY')
         if gemini_key:
             print("[PROVIDER_MANAGER] Loading Gemini provider...")
-            self.providers.append(GeminiProvider("gemini", "gemini-3-flash-preview", gemini_key))
+            # gemini-3-flash-preview
+
+            self.providers.append(GeminiProvider("gemini", "gemini-2.5-flash", gemini_key)) 
             print("[PROVIDER_MANAGER] ✅ Gemini provider loaded successfully")
         else:
             print("[PROVIDER_MANAGER] ⚠️ Gemini API key not found, skipping Gemini")

@@ -58,4 +58,42 @@ router.post('/assist', storedeskRateLimit, async (req, res) => {
   }
 });
 
+router.post('/voice-to-text', async (req, res) => {
+  try {
+    const { audioBase64 } = req.body;
+    
+    if (!audioBase64) {
+      return res.status(400).json({ error: 'audioBase64 is required' });
+    }
+
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const rawBody = JSON.stringify({ audioBase64 });
+
+    // HMAC-SHA256 signature using shared secret + timestamp + raw request body
+    const signature = crypto
+      .createHmac('sha256', HMAC_SECRET)
+      .update(timestamp + rawBody)
+      .digest('hex');
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-HMAC-Signature': signature,
+      'X-Timestamp': timestamp
+    };
+
+    const response = await axios.post(`${AI_SERVICE_URL}/api/voice-to-text`, { audioBase64 }, { headers });
+
+    console.log(`[Voice-to-Text] Request processed, Timestamp: ${new Date().toISOString()}`);
+
+    res.status(response.status).send(response.data);
+  } catch (error) {
+    console.error('[Voice-to-Text Error]', error.message);
+    if (error.response) {
+      res.status(error.response.status).send(error.response.data);
+    } else {
+      res.status(500).json({ error: 'Internal voice-to-text error' });
+    }
+  }
+});
+
 module.exports = router;

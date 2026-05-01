@@ -1,23 +1,22 @@
-FROM node:18-alpine
+# Multi-stage Dockerfile - Frontend
+# Optimized for both development and production builds
 
+FROM node:18-alpine AS base
 WORKDIR /app
 
-# Copy package files
+# Copy package files and install dependencies
 COPY package*.json ./
+RUN npm ci --only=production
 
-# Install dependencies
-RUN npm install
-
-# Copy application code
+# Development stage
+FROM base AS development
 COPY . .
-
-# Create .env file if it doesn't exist
-RUN if [ ! -f .env ]; then \
-    echo "NEXT_PUBLIC_STOREDESK_TEST_ENABLED=true" >> .env && \
-    echo "NEXT_PUBLIC_TEST_CONNECTOR_ID=test-connector-123" >> .env && \
-    echo "NEXT_PUBLIC_BACKEND_URL=http://nodejs:4010" >> .env; \
-  fi
-
 EXPOSE 3000
-
 CMD ["npm", "run", "dev"]
+
+# Production stage
+FROM base AS production
+RUN npm run build
+COPY --from=production /app/dist /app/dist
+EXPOSE 3000
+CMD ["npm", "start"]

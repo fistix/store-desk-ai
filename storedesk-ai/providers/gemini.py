@@ -476,10 +476,18 @@ Respond in JSON format:
                     tool_call = self._build_single_tool_call(tool_name, parameters)
                     if tool_call:
                         return [tool_call]
+                
+                # If we got here, no valid tool calls were found - return empty
+                print(f"[GEMINI] 📝 No tool calls needed, returning text response")
+                return []
         except Exception as e:
             print(f"[GEMINI] ❌ Error parsing LLM decision: {str(e)}")
         
-        # Fallback: use existing text parsing
+        # Fallback: use existing text parsing ONLY if no JSON was found
+        # Don't fall back if JSON parsing failed but we found "tool": "none"
+        if "tool" in decision_text and "none" in decision_text:
+            print(f"[GEMINI] 📝 Detected 'tool: none' in text, returning empty tool calls")
+            return []
         return self._parse_tool_calls_from_text(decision_text, tools)
 
     def _build_single_tool_call(self, tool_name, parameters):

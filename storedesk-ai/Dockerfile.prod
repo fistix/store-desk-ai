@@ -1,9 +1,12 @@
 # Production Dockerfile - StoreDesk AI
-# Multi-stage build for optimized production image
+# Multi-stage build with package caching for optimized production image
 
 FROM python:3.9-slim AS builder
 
 WORKDIR /app
+
+# Create cache directory for pip packages
+RUN mkdir -p /root/.cache/pip
 
 # Install system dependencies for build
 RUN apt-get update && apt-get install -y \
@@ -18,16 +21,23 @@ RUN apt-get update && apt-get install -y \
     pkg-config \
     python3-dev \
     build-essential \
+    wget \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements and install Python dependencies
+# Copy requirements and install Python dependencies with cache
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --cache-dir /root/.cache/pip -r requirements.txt
 
 # Production stage
 FROM python:3.9-slim AS production
 
 WORKDIR /app
+
+# Create cache directory and copy from builder
+RUN mkdir -p /root/.cache/pip
+COPY --from=builder /root/.cache/pip /root/.cache/pip
+COPY --from=builder /app/requirements.txt .
 
 # Install runtime system dependencies (only runtime, no build tools)
 RUN apt-get update && apt-get install -y \
@@ -43,11 +53,8 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements from builder
-COPY --from=builder /app/requirements.txt .
-
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Install Python dependencies from cache
+RUN pip install --no-cache-dir --cache-dir /root/.cache/pip -r requirements.txt
 
 # Copy application code
 COPY . .

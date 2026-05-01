@@ -6,6 +6,7 @@ from core.context import UserContext
 from agent.base_agent import AgentState
 from agent.domains import domain_registry
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from .semantic_intent_classifier import SemanticIntentClassifier
 
 # Define the orchestrator system prompt
 ORCHESTRATOR_SYSTEM_PROMPT = (
@@ -19,6 +20,8 @@ ORCHESTRATOR_SYSTEM_PROMPT = (
 
 class Orchestrator:
     def __init__(self):
+        self.domains = domain_registry
+        self.intent_classifier = SemanticIntentClassifier()
         print("[ORCHESTRATOR] 🚀 INITIALIZING ORCHESTRATOR")
         print("[ORCHESTRATOR] 📋 Loading domain agents...")
         
@@ -52,18 +55,20 @@ class Orchestrator:
             }
         )
 
-        # Direct routing to products agent when keywords match
+        # Use ML-based routing decision from _route_to_domain_node
         def route_decision(state):
-            user_message = state["userMessage"].lower()
-            # Require stock or price to be mentioned, not just generic monitoring
-            keywords = ["stock", "price", "product"]
-            matched_keywords = [kw for kw in keywords if kw in user_message]
+            routing_decision = state.get("routing_decision", "clarification")
+            matched_keywords = state.get("matched_keywords", [])
+            intent_confidence = state.get("intent_confidence", 0.0)
             
             print(f"[ORCHESTRATOR] ROUTING DECISION")
-            print(f"[ORCHESTRATOR] Message: {user_message[:100]}{'...' if len(user_message) > 100 else ''}")
+            print(f"[ORCHESTRATOR] Message: {state.get('userMessage', '')[:100]}{'...' if len(state.get('userMessage', '')) > 100 else ''}")
             print(f"[ORCHESTRATOR] Matched keywords: {matched_keywords}")
+            print(f"[ORCHESTRATOR] Routing decision: {routing_decision}")
+            print(f"[ORCHESTRATOR] Intent confidence: {intent_confidence}")
+            print(f"[ORCHESTRATOR] Full state keys: {list(state.keys())}")
             
-            if matched_keywords:
+            if routing_decision == "products":
                 decision = "run_products_agent"
                 print(f"[ORCHESTRATOR] ROUTING TO: {decision} (products agent)")
             else:
@@ -74,7 +79,10 @@ class Orchestrator:
         
         graph.add_conditional_edges(
             "route_to_domain",
-            route_decision,
+            lambda state: (
+                print(f"[ORCHESTRATOR] 🔄 CONDITIONAL EDGE - routing_decision: {state.get('routing_decision')}")
+                or ("run_products_agent" if state.get("routing_decision") == "products" else "handle_clarification")
+            ),
             {
                 "run_products_agent": "run_products_agent",
                 "handle_clarification": "handle_clarification"
@@ -171,20 +179,36 @@ class Orchestrator:
         user_message = state.get("userMessage", "")
         print(f"[ORCHESTRATOR] 📝 Analyzing message: '{user_message[:100]}{'...' if len(user_message) > 100 else ''}'")
         
-        # Simple keyword-based routing for success flow
-        user_message_lower = user_message.lower()
-        # Require stock or price to be mentioned, not just generic monitoring
-        product_keywords = ["stock", "price", "product"]
+        # Use ML-based intent classification
+        intent_result = self.intent_classifier.classify_intent(user_message)
+        print(f"[ORCHESTRATOR] 🎯 ML Intent: {intent_result.intent} (confidence: {intent_result.confidence:.2f})")
+        print(f"[ORCHESTRATOR] 🔍 Entities: {intent_result.entities}")
         
-        matched_keywords = [kw for kw in product_keywords if kw in user_message_lower]
-        print(f"[ORCHESTRATOR] 🔍 Matched keywords: {matched_keywords}")
-        
-        if matched_keywords:
+        # Route based on ML classification with confidence threshold
+        if intent_result.intent in ["stock_monitoring", "price_monitoring"] and intent_result.confidence > 0.3:
             print("[ORCHESTRATOR] ✅ Routing to PRODUCTS domain")
-            return {"routing_decision": "products", "matched_keywords": matched_keywords}
+            result_state = {
+                **state,  # Merge existing state
+                "routing_decision": "products", 
+                "matched_keywords": [intent_result.intent], 
+                "intent_confidence": intent_result.confidence
+            }
+            print(f"[ORCHESTRATOR] 🔄 Returning state with keys: {list(result_state.keys())}")
+            print(f"[ORCHESTRATOR] 🔄 routing_decision in returned state: {result_state.get('routing_decision')}")
+            print(f"[ORCHESTRATOR] 🔄 intent_confidence in returned state: {result_state.get('intent_confidence')}")
+            return result_state
         else:
-            print("[ORCHESTRATOR] ❓ No product-specific keywords matched - routing to clarification")
-            return {"routing_decision": "clarification", "matched_keywords": []}
+            print(f"[ORCHESTRATOR] ❓ Low confidence ({intent_result.confidence:.2f}) or wrong intent - routing to clarification")
+            result_state = {
+                **state,  # Merge existing state
+                "routing_decision": "clarification", 
+                "matched_keywords": [], 
+                "intent_confidence": intent_result.confidence
+            }
+            print(f"[ORCHESTRATOR] 🔄 Returning state with keys: {list(result_state.keys())}")
+            print(f"[ORCHESTRATOR] 🔄 routing_decision in returned state: {result_state.get('routing_decision')}")
+            print(f"[ORCHESTRATOR] 🔄 intent_confidence in returned state: {result_state.get('intent_confidence')}")
+            return result_state
     
     async def _run_products_agent_node(self, state: AgentState) -> Dict[str, Any]:
         print("[ORCHESTRATOR] 🏭 RUN_PRODUCTS_AGENT_NODE")

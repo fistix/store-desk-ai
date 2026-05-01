@@ -1,8 +1,13 @@
-FROM python:3.9-slim
+# Multi-stage Dockerfile - StoreDesk AI
+# Optimized for both development and production builds
 
+FROM python:3.9-slim AS base
 WORKDIR /app
 
-# Install system dependencies
+# Create cache directory for pip packages
+RUN mkdir -p /root/.cache/pip
+
+# Install system dependencies for all stages
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     libavformat-dev \
@@ -15,25 +20,23 @@ RUN apt-get update && apt-get install -y \
     pkg-config \
     python3-dev \
     build-essential \
+    wget \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install Python dependencies
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --cache-dir /root/.cache/pip --timeout 600 --retries 3 -r requirements.txt
 
-# Copy application code
+# Development stage
+FROM base AS development
+RUN pip install uvicorn[standard] pytest black flake8
 COPY . .
-
-# Create .env file if it doesn't exist
-RUN if [ ! -f .env ]; then \
-    echo "PORT=8000" > .env && \
-    echo "ENVIRONMENT=development" >> .env && \
-    echo "REDIS_URL=redis://localhost:6379" >> .env; \
-  fi
-
 EXPOSE 8000
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "/app", "--log-level", "debug"]
 
-# Install uvicorn for development hot reloading
-RUN pip install uvicorn[standard]
-
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+# Production stage
+FROM base AS production
+COPY . .
+EXPOSE 8000
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -1,8 +1,8 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 
 export default function StoreDeskTest() {
-  const [sessionId, setSessionId] = useState(generateUUID());
+  const [sessionId, setSessionId] = useState('');
   const [message, setMessage] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [conversation, setConversation] = useState([]);
@@ -13,9 +13,16 @@ export default function StoreDeskTest() {
   const [debugResponse, setDebugResponse] = useState(null);
   const [pendingConfirmation, setPendingConfirmation] = useState(false);
   const [mockScenario, setMockScenario] = useState('happy_path');
+  const [isClient, setIsClient] = useState(false);
   
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
+
+  // Generate UUID only on client side to prevent hydration mismatch
+  useEffect(() => {
+    setIsClient(true);
+    setSessionId(generateUUID());
+  }, []);
 
   const testProducts = [
     { id: '7626ff3a-1234-5678-9abc-123456789abc', name: 'Product 1' },
@@ -97,7 +104,12 @@ export default function StoreDeskTest() {
   const blobToBase64 = (blob) => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onload = () => resolve(reader.result.split(',')[1]);
+      reader.onload = () => {
+        const dataUrl = reader.result;
+        // Split on comma and take the second part, or return full result if no comma
+        const base64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
+        resolve(base64);
+      };
       reader.onerror = reject;
       reader.readAsDataURL(blob);
     });
@@ -229,11 +241,12 @@ export default function StoreDeskTest() {
             
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Session ID: {sessionId}
+                Session ID: {isClient ? sessionId : 'Loading...'}
               </label>
               <button 
                 onClick={resetSession}
-                className="bg-blue-500 text-white px-3 py-1 rounded text-sm hover:bg-blue-600"
+                disabled={!isClient}
+                className="bg-blue-500 text-white px-3 py-1 rounded text-sm hover:bg-blue-600 disabled:bg-gray-400"
               >
                 Reset Session
               </button>
