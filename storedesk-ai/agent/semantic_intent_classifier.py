@@ -121,7 +121,7 @@ class SemanticIntentClassifier:
         similarities = np.dot(route_norms, query_norm.T)
         return similarities
     
-    def classify_intent(self, message: str) -> IntentResult:
+    async def classify_intent(self, message: str) -> IntentResult:
         """
         Classify intent using semantic similarity
         """

@@ -3,10 +3,11 @@ import json
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from config.settings import settings
+from .redis_client import redis_client
 
 class SessionManager:
     def __init__(self):
-        self.redis_client = redis.from_url(settings.REDIS_URL)
+        self.redis_client = redis_client
 
     async def _get_key(self, session_id: str, key_type: str) -> str:
         return f"session:{session_id}:{key_type}"

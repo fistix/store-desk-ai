@@ -1,14 +1,14 @@
 """
 LLM-based Intent Classification for Agent Routing
-Uses local small language model for intelligent intent understanding
+Uses external LLM providers for intelligent intent understanding
 """
 
 import os
 import json
-import requests
-from typing import Dict, List, Optional
+import re
+from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
-from pathlib import Path
+from providers.manager import ProviderManager
 
 @dataclass
 class IntentResult:
@@ -16,105 +16,69 @@ class IntentResult:
     confidence: float
     entities: List[str]
     reasoning: str
+    matched_example: str = ""
 
 class LLMIntentClassifier:
-    def __init__(self, model_name: str = "tinyllama-1.1b"):
-        self.model_name = model_name
-        self.model_path = None
-        self.llm = None
-        self.model_configs = {
-            "tinyllama-1.1b": {
-                "url": "https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
-                "size": "470MB",
-                "filename": "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"
-            },
-            "qwen-0.5b": {
-                "url": "https://huggingface.co/Qwen/Qwen1.5-0.5B-Chat-GGUF/resolve/main/qwen1.5-0.5b-chat-q4_k_m.gguf",
-                "size": "380MB",
-                "filename": "qwen1.5-0.5b-chat-q4_k_m.gguf"
-            },
-            "pythia-160m": {
-                "url": "https://huggingface.co/TheBloke/Pythia-160M-SFT-v0.1-GGUF/resolve/main/pythia-160m-sft-v0.1.Q4_K_M.gguf",
-                "size": "120MB",
-                "filename": "pythia-160m-sft-v0.1.Q4_K_M.gguf"
-            }
-        }
-        self._initialize_model()
-    
-    def _get_model_dir(self) -> Path:
-        """Get or create model directory"""
-        model_dir = Path.home() / ".cache" / "intent_models"
-        model_dir.mkdir(parents=True, exist_ok=True)
-        return model_dir
-    
-    def _download_model(self, model_config: Dict) -> Path:
-        """Download model if not exists"""
-        model_dir = self._get_model_dir()
-        model_path = model_dir / model_config["filename"]
+    def __init__(self, use_llm_routing: bool = True, provider_priority: str = "gemini,openai,groq"):
+        self.use_llm_routing = use_llm_routing
+        self.provider_priority = [p.strip() for p in provider_priority.split(",") if p.strip()]
+        self.provider_manager = None
+        self.semantic_classifier = None
         
-        if not model_path.exists():
-            print(f"[INTENT CLASSIFIER] 📥 Downloading {self.model_name} model ({model_config['size']})...")
-            
-            # Download with progress
-            response = requests.get(model_config["url"], stream=True)
-            total_size = int(response.headers.get('content-length', 0))
-            
-            with open(model_path, 'wb') as f:
-                downloaded = 0
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk:
-                        f.write(chunk)
-                        downloaded += len(chunk)
-                        if total_size > 0:
-                            progress = (downloaded / total_size) * 100
-                            print(f"\r[INTENT CLASSIFIER] 📥 Downloading... {progress:.1f}%", end="")
-            
-            print(f"\n[INTENT CLASSIFIER] ✅ Model downloaded to {model_path}")
-        else:
-            print(f"[INTENT CLASSIFIER] ✅ Model found at {model_path}")
+        # Initialize providers
+        self._initialize_providers()
         
-        return model_path
+        # Initialize semantic classifier as fallback
+        self._initialize_semantic_classifier()
     
-    def _initialize_model(self):
-        """Initialize LLM model"""
+    def _initialize_providers(self):
+        """Initialize LLM providers for intent classification"""
         try:
-            from llama_cpp import Llama
-            
-            model_config = self.model_configs.get(self.model_name)
-            if not model_config:
-                raise ValueError(f"Unknown model: {self.model_name}")
-            
-            self.model_path = self._download_model(model_config)
-            
-            print(f"[INTENT CLASSIFIER] 🤖 Loading {self.model_name} model...")
-            self.llm = Llama(
-                model_path=str(self.model_path),
-                n_ctx=512,
-                n_threads=4,
-                verbose=False
-            )
-            print(f"[INTENT CLASSIFIER] ✅ Model loaded successfully")
-            
-        except ImportError:
-            print("[INTENT CLASSIFIER] ❌ llama-cpp-python not installed, falling back to rule-based")
-            self.llm = None
+            self.provider_manager = ProviderManager()
+            print(f"[LLM INTENT CLASSIFIER] � Initialized provider manager")
+            print(f"[LLM INTENT CLASSIFIER] 📊 Available providers: {len(self.provider_manager.providers)}")
         except Exception as e:
-            print(f"[INTENT CLASSIFIER] ❌ Failed to load model: {e}")
-            self.llm = None
+            print(f"[LLM INTENT CLASSIFIER] ❌ Failed to initialize providers: {e}")
+            self.provider_manager = None
     
-    def classify_intent(self, message: str) -> IntentResult:
+    def _initialize_semantic_classifier(self):
+        """Initialize semantic classifier as fallback"""
+        try:
+            from .semantic_intent_classifier import SemanticIntentClassifier
+            self.semantic_classifier = SemanticIntentClassifier()
+            print(f"[LLM INTENT CLASSIFIER] ✅ Semantic classifier initialized as fallback")
+        except Exception as e:
+            print(f"[LLM INTENT CLASSIFIER] ❌ Failed to initialize semantic classifier: {e}")
+            self.semantic_classifier = None
+    
+    async def classify_intent(self, message: str) -> IntentResult:
         """
-        Classify user intent using local LLM
+        Classify user intent using LLM providers with fallback chain
         """
-        if self.llm is None:
-            # Fallback to simple rule-based classification
-            return self._fallback_classification(message)
+        print(f"[LLM INTENT CLASSIFIER] 🎯 Classifying intent: '{message[:50]}...'")
         
+        # Check if LLM routing is enabled
+        if not self.use_llm_routing:
+            print(f"[LLM INTENT CLASSIFIER] 📊 LLM routing disabled, using semantic classifier")
+            return await self._classify_with_semantic(message)
+        
+        # Try LLM providers first
+        if self.provider_manager and self.provider_manager.providers:
+            return await self._classify_with_llm(message)
+        
+        # Fallback to semantic classifier
+        print(f"[LLM INTENT CLASSIFIER] 📊 No providers available, using semantic classifier")
+        return await self._classify_with_semantic(message)
+    
+    async def _classify_with_llm(self, message: str) -> IntentResult:
+        """
+        Classify intent using LLM providers
+        """
         prompt = f"""You are an intent classifier for a product management system. 
 
 Classify this user message into one of these intents:
 1. "stock_monitoring" - User wants to set up stock alerts/monitoring for products
-2. "price_monitoring" - User wants to set up price alerts/monitoring for products
+2. "price_monitoring" - User wants to set up price alerts/monitoring for products  
 3. "general_chat" - General conversation, not about monitoring
 
 User message: "{message}"
@@ -129,32 +93,88 @@ Return JSON format:
 JSON:"""
 
         try:
-            response = self.llm(prompt, max_tokens=150, stop=["}"])
-            response_text = response["choices"][0]["text"].strip()
+            # Try providers in priority order
+            for provider_name in self.provider_priority:
+                if provider_name in self.provider_manager.providers:
+                    provider = self.provider_manager.providers[provider_name]
+                    print(f"[LLM INTENT CLASSIFIER] 🤖 Trying provider: {provider_name}")
+                    
+                    # Call LLM without tools
+                    messages = [{"role": "user", "content": prompt}]
+                    response = await provider.complete(messages)
+                    
+                    if response and "content" in response:
+                        content = response["content"]
+                        print(f"[LLM INTENT CLASSIFIER] 📝 {provider_name} response: {content[:100]}...")
+                        
+                        # Parse JSON response
+                        parsed_result = self._parse_llm_response(content, message)
+                        if parsed_result:
+                            print(f"[LLM INTENT CLASSIFIER] ✅ {provider_name} classified: {parsed_result.intent} (confidence: {parsed_result.confidence:.2f})")
+                            return parsed_result
+                        else:
+                            print(f"[LLM INTENT CLASSIFIER] ❌ {provider_name} failed to parse response")
+                    else:
+                        print(f"[LLM INTENT CLASSIFIER] ❌ {provider_name} no response")
             
-            # Parse JSON response
-            if "{" in response_text and "}" in response_text:
-                json_start = response_text.find("{")
-                json_end = response_text.rfind("}") + 1
-                json_str = response_text[json_start:json_end]
+            # All providers failed, fallback to semantic
+            print(f"[LLM INTENT CLASSIFIER] 📊 All LLM providers failed, using semantic classifier")
+            return await self._classify_with_semantic(message)
+            
+        except Exception as e:
+            print(f"[LLM INTENT CLASSIFIER] ❌ LLM classification failed: {e}")
+            return await self._classify_with_semantic(message)
+    
+    def _parse_llm_response(self, content: str, message: str) -> Optional[IntentResult]:
+        """
+        Parse LLM response into IntentResult
+        """
+        try:
+            # Extract JSON from response
+            if "{" in content and "}" in content:
+                json_start = content.find("{")
+                json_end = content.rfind("}") + 1
+                json_str = content[json_start:json_end]
                 
                 result = json.loads(json_str)
                 
+                # Validate intent
+                intent = result.get("intent", "general_chat")
+                if intent not in ["stock_monitoring", "price_monitoring", "general_chat"]:
+                    intent = "general_chat"
+                
                 # Extract entities
-                entities = self._extract_entities(message, result["intent"])
+                entities = self._extract_entities(message, intent)
                 
                 return IntentResult(
-                    intent=result["intent"],
-                    confidence=float(result["confidence"]),
+                    intent=intent,
+                    confidence=float(result.get("confidence", 0.5)),
                     entities=entities,
-                    reasoning=result.get("reasoning", "")
+                    reasoning=result.get("reasoning", ""),
+                    matched_example=""
                 )
             else:
-                return self._fallback_classification(message)
+                return None
                 
         except Exception as e:
-            print(f"[INTENT CLASSIFIER] ❌ LLM classification failed: {e}")
-            return self._fallback_classification(message)
+            print(f"[LLM INTENT CLASSIFIER] ❌ Failed to parse response: {e}")
+            return None
+    
+    async def _classify_with_semantic(self, message: str) -> IntentResult:
+        """
+        Classify intent using semantic classifier
+        """
+        if self.semantic_classifier:
+            try:
+                result = await self.semantic_classifier.classify_intent(message)
+                print(f"[LLM INTENT CLASSIFIER] 📊 Semantic classified: {result.intent} (confidence: {result.confidence:.2f})")
+                return result
+            except Exception as e:
+                print(f"[LLM INTENT CLASSIFIER] ❌ Semantic classification failed: {e}")
+        
+        # Final fallback to rule-based
+        print(f"[LLM INTENT CLASSIFIER] 📊 Using rule-based fallback")
+        return self._fallback_classification(message)
     
     def _fallback_classification(self, message: str) -> IntentResult:
         """

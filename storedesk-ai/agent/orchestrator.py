@@ -1,3 +1,4 @@
+import os
 from typing import List, Dict, Any, Optional
 from langgraph.graph import StateGraph, END
 from config.settings import settings
@@ -7,6 +8,9 @@ from agent.base_agent import AgentState
 from agent.domains import domain_registry
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from .semantic_intent_classifier import SemanticIntentClassifier
+from .llm_intent_classifier import LLMIntentClassifier
+from security.prompt_sanitizer import PromptSanitizer, SecurityException
+from security.security_monitor import security_monitor
 
 # Define the orchestrator system prompt
 ORCHESTRATOR_SYSTEM_PROMPT = (
@@ -21,7 +25,21 @@ ORCHESTRATOR_SYSTEM_PROMPT = (
 class Orchestrator:
     def __init__(self):
         self.domains = domain_registry
-        self.intent_classifier = SemanticIntentClassifier()
+        
+        # Initialize security components
+        self.prompt_sanitizer = PromptSanitizer()
+        
+        # Initialize intent classifier based on configuration
+        use_llm_routing = os.getenv("USE_LLM_FOR_AGENT_ROUTING", "false").lower() == "true"
+        provider_priority = os.getenv("LLM_ROUTING_PROVIDER_PRIORITY", "gemini,openai,groq")
+        
+        if use_llm_routing:
+            print("[ORCHESTRATOR] 🤖 Using LLM-based intent classification")
+            self.intent_classifier = LLMIntentClassifier(use_llm_routing=True, provider_priority=provider_priority)
+        else:
+            print("[ORCHESTRATOR] 📊 Using semantic intent classification")
+            self.intent_classifier = SemanticIntentClassifier()
+        
         print("[ORCHESTRATOR] 🚀 INITIALIZING ORCHESTRATOR")
         print("[ORCHESTRATOR] 📋 Loading domain agents...")
         
@@ -177,10 +195,47 @@ class Orchestrator:
     async def _route_to_domain_node(self, state: AgentState) -> Dict[str, Any]:
         print("[ORCHESTRATOR] 🧭 ROUTE_TO_DOMAIN_NODE")
         user_message = state.get("userMessage", "")
+        user_id = state.get("userContext", {}).get("user_id", "unknown")
         print(f"[ORCHESTRATOR] 📝 Analyzing message: '{user_message[:100]}{'...' if len(user_message) > 100 else ''}'")
         
+        # Additional security validation at orchestrator level
+        try:
+            # Validate message content again
+            if self.prompt_sanitizer.detect_injection(user_message, user_id):
+                await security_monitor.log_security_event(
+                    "orchestrator_injection_detected",
+                    user_id,
+                    user_message[:100],
+                    "Injection detected at orchestrator level",
+                    "HIGH"
+                )
+                # Route to clarification for suspicious input
+                return {
+                    **state,
+                    "routing_decision": "clarification",
+                    "matched_keywords": [],
+                    "intent_confidence": 0.0,
+                    "security_flag": True
+                }
+            
+            # Sanitize conversation history
+            conversation_history = state.get("conversationHistory", [])
+            if conversation_history:
+                sanitized_history = self.prompt_sanitizer.sanitize_message_history(conversation_history, user_id)
+                state["conversationHistory"] = sanitized_history
+                
+        except Exception as e:
+            print(f"[ORCHESTRATOR] ❌ Security validation error: {e}")
+            await security_monitor.log_security_event(
+                "orchestrator_security_error",
+                user_id,
+                str(e),
+                "Security validation failed",
+                "MEDIUM"
+            )
+        
         # Use ML-based intent classification
-        intent_result = self.intent_classifier.classify_intent(user_message)
+        intent_result = await self.intent_classifier.classify_intent(user_message)
         print(f"[ORCHESTRATOR] 🎯 ML Intent: {intent_result.intent} (confidence: {intent_result.confidence:.2f})")
         print(f"[ORCHESTRATOR] 🔍 Entities: {intent_result.entities}")
         

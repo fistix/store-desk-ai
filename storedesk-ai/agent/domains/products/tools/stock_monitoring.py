@@ -3,7 +3,7 @@ from core.graphql_client import graphql_client
 from typing import Dict, Any, List, Optional
 
 class StockMonitoringTool(BaseTool):
-    """Tool for updating stock monitoring settings for products."""
+    """Enable or disable stock/quantity monitoring for selected or all products. Use for both enable and disable requests."""
 
     def __init__(self):
         super().__init__("stock_monitoring", self.__doc__.strip())
@@ -17,13 +17,33 @@ class StockMonitoringTool(BaseTool):
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "productIds": {"items": {"type": "string"}, "description": "List of product IDs to apply the change to. Required if isApplyToAllProducts is false."},
+                        "productIds": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": (
+                                "Product IDs to update. When the user says 'selected products', "
+                                "use the Available Product IDs from the system prompt. "
+                                "Leave empty when isApplyToAllProducts is true."
+                            ),
+                        },
                         "bulkStockMonitoring": {
                             "type": "object",
                             "properties": {
-                                "isApplyToAllProducts": {"description": "Whether to apply the change to all products. Set to true if user explicitly mentions 'all products'."},
-                                "isQuantityEnabled": {"description": "Whether quantity monitoring is enabled."},
-                                "quantityThreshold": {"description": "The quantity threshold for stock alerts."}
+                                "isApplyToAllProducts": {
+                                    "type": "boolean",
+                                    "description": "True only if the user explicitly says 'all products'. False for 'selected products'.",
+                                },
+                                "isQuantityEnabled": {
+                                    "type": "boolean",
+                                    "description": "true to enable stock/quantity monitoring, false to disable it.",
+                                },
+                                "quantityThreshold": {
+                                    "type": "integer",
+                                    "description": (
+                                        "Quantity threshold when enabling. "
+                                        "Use 0 when disabling stock monitoring."
+                                    ),
+                                },
                             },
                             "required": ["isApplyToAllProducts", "isQuantityEnabled", "quantityThreshold"]
                         }
@@ -40,9 +60,16 @@ class StockMonitoringTool(BaseTool):
         
         input_data = parameters.get("bulkStockMonitoring", {})
         product_ids = parameters.get("productIds")
+        selected_product_ids = user_context.get("selected_product_ids", []) or []
         
         print(f"[STOCK_MONITORING_TOOL] 📊 Input Data: {input_data}")
         print(f"[STOCK_MONITORING_TOOL] 🏷️ Product IDs: {product_ids}")
+
+        # Prefer UI-selected products when the model omitted productIds
+        if not input_data.get("isApplyToAllProducts") and not product_ids and selected_product_ids:
+            product_ids = list(selected_product_ids)
+            parameters["productIds"] = product_ids
+            print(f"[STOCK_MONITORING_TOOL] ✅ Using selected_product_ids from context: {product_ids}")
 
         if not input_data.get("isApplyToAllProducts") and not product_ids:
             print(f"[STOCK_MONITORING_TOOL] ❌ Validation failed: No product IDs provided for specific update")
@@ -50,7 +77,6 @@ class StockMonitoringTool(BaseTool):
         
         if not input_data.get("isApplyToAllProducts") and product_ids:
             # Validate product_ids against selected_product_ids in user_context if available
-            selected_product_ids = user_context.get("selected_product_ids", [])
             print(f"[STOCK_MONITORING_TOOL] 🔍 Selected Product IDs from context: {selected_product_ids}")
             
             if selected_product_ids and not all(p_id in selected_product_ids for p_id in product_ids):

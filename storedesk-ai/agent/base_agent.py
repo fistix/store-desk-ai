@@ -9,6 +9,8 @@ import operator
 from typing import Annotated, Sequence, TypedDict
 from langgraph.graph import StateGraph, END
 from config.settings import settings
+from security.prompt_sanitizer import PromptSanitizer, SecurityException
+from security.security_monitor import security_monitor
 
 class AgentState(TypedDict):
     userMessage: str
@@ -33,6 +35,10 @@ class BaseAgent(ABC):
         self.tool_registry = tool_registry
         self.tools = self._initialize_tools()
         self.llm_with_tools = None # Will be bound dynamically
+        
+        # Initialize security components
+        self.prompt_sanitizer = PromptSanitizer()
+        
         self.graph = self._build_graph()
 
     def _initialize_tools(self) -> List[BaseTool]:
@@ -46,10 +52,26 @@ class BaseAgent(ABC):
         pass
 
     async def _call_llm(self, state: AgentState, tools_available: bool = False, tools: Optional[List[Dict[str, Any]]] = None, custom_prompt: Optional[str] = None) -> Dict[str, Any]:
+        user_id = state.get("userContext", {}).get("user_id", "unknown")
+        
         # If custom prompt is provided, use it directly
         if custom_prompt:
             print(f"[BASE_AGENT] 📝 Using custom prompt for LLM call")
-            messages = [HumanMessage(content=custom_prompt)]
+            
+            # Sanitize custom prompt
+            try:
+                sanitized_prompt = self.prompt_sanitizer.sanitize_input(custom_prompt, user_id)
+                messages = [HumanMessage(content=sanitized_prompt)]
+            except SecurityException as e:
+                await security_monitor.log_security_event(
+                    "agent_custom_prompt_injection",
+                    user_id,
+                    custom_prompt[:100],
+                    str(e),
+                    "HIGH"
+                )
+                # Return safe response
+                return {"content": "I cannot process that request. Please provide a different input.", "provider": "security_block"}
             
             if tools_available and tools:
                 print(f"[BASE_AGENT] 🔧 Passing {len(tools)} tools to LLM")
@@ -58,7 +80,8 @@ class BaseAgent(ABC):
                 print(f"[BASE_AGENT] 💬 No tools available - calling LLM without tools")
                 llm_response = await provider_manager.complete(messages)
             
-            return llm_response
+            # Validate LLM response
+            return self.prompt_sanitizer.validate_llm_response(llm_response, user_id)
         
         # Create enhanced system prompt with context
         system_prompt = self.system_prompt
@@ -66,36 +89,99 @@ class BaseAgent(ABC):
         # Add selected product IDs to system prompt if available
         selected_product_ids = state.get("userContext", {}).get("selected_product_ids", [])
         if selected_product_ids:
-            system_prompt += f"\n\nAvailable Product IDs: {selected_product_ids}\nUse these product IDs when calling tools that require productIds parameter."
+            system_prompt += (
+                f"\n\nAvailable Product IDs (already selected by the user): {selected_product_ids}\n"
+                "When the user refers to 'selected products' or does not name specific IDs, "
+                "pass these exact IDs as productIds in the tool call. "
+                "Do not ask the user for product IDs when this list is present."
+            )
         
         messages = [SystemMessage(content=system_prompt)]
+        
+        # Sanitize conversation history
         for msg in state["conversationHistory"]:
             if msg["role"] == "user":
-                messages.append(HumanMessage(content=msg["content"]))
+                try:
+                    sanitized_content = self.prompt_sanitizer.sanitize_input(msg["content"], user_id)
+                    messages.append(HumanMessage(content=sanitized_content))
+                except SecurityException as e:
+                    await security_monitor.log_security_event(
+                        "agent_history_injection",
+                        user_id,
+                        msg["content"][:100],
+                        str(e),
+                        "HIGH"
+                    )
+                    # Skip suspicious message
+                    continue
             elif msg["role"] == "assistant":
                 messages.append(AIMessage(content=msg["content"]))
-        messages.append(HumanMessage(content=state["userMessage"]))
+        
+        # Sanitize current user message
+        try:
+            sanitized_user_message = self.prompt_sanitizer.sanitize_input(state["userMessage"], user_id)
+            messages.append(HumanMessage(content=sanitized_user_message))
+        except SecurityException as e:
+            await security_monitor.log_security_event(
+                "agent_message_injection",
+                user_id,
+                state["userMessage"][:100],
+                str(e),
+                "HIGH"
+            )
+            # Return safe response
+            return {"content": "I cannot process that request. Please provide a different input.", "provider": "security_block"}
 
         if tools_available and tools:
             print(f"[BASE_AGENT] 🔧 Passing {len(tools)} tools to LLM")
             llm_response = await provider_manager.complete(messages, tools)
             
+            # Validate LLM response
+            validated_response = self.prompt_sanitizer.validate_llm_response(llm_response, user_id)
+            
             # Fill in product IDs from context if tool calls were parsed
-            if "tool_calls" in llm_response and llm_response["tool_calls"]:
+            if "tool_calls" in validated_response and validated_response["tool_calls"]:
                 selected_product_ids = state.get("userContext", {}).get("selected_product_ids", [])
                 print(f"[BASE_AGENT] 🔧 Filling product IDs: {selected_product_ids}")
                 
-                for tool_call in llm_response["tool_calls"]:
+                for tool_call in validated_response["tool_calls"]:
                     args = tool_call["function"]["arguments"]
-                    # Only fill product IDs if they're empty and not "all"
-                    if "productIds" in args and args["productIds"] == [] and args.get("productIds") != "all":
-                        args["productIds"] = selected_product_ids
-                        print(f"[BASE_AGENT] ✅ Updated tool call with product IDs: {args}")
+                    
+                    # Validate tool parameters
+                    if not self.prompt_sanitizer.validate_tool_parameters(args, user_id):
+                        await security_monitor.log_security_event(
+                            "agent_invalid_tool_params",
+                            user_id,
+                            str(args)[:100],
+                            "Invalid tool parameters detected",
+                            "HIGH"
+                        )
+                        # Remove invalid tool call
+                        validated_response["tool_calls"].remove(tool_call)
+                        continue
+                    
+                    # Fill product IDs from user context when LLM omitted them
+                    product_ids = args.get("productIds")
+                    bulk = args.get("bulkStockMonitoring") or args.get("bulkPriceMonitoring") or {}
+                    apply_to_all = bool(bulk.get("isApplyToAllProducts", False))
+
+                    if not apply_to_all and selected_product_ids:
+                        if not product_ids:
+                            args["productIds"] = list(selected_product_ids)
+                            print(f"[BASE_AGENT] ✅ Filled empty productIds from context: {args['productIds']}")
+                        else:
+                            print(f"[BASE_AGENT] 🔧 Using LLM-provided product IDs: {product_ids}")
+                    elif "productIds" not in args and selected_product_ids and not apply_to_all:
+                        args["productIds"] = list(selected_product_ids)
+                        print(f"[BASE_AGENT] ✅ Added missing productIds from context: {args['productIds']}")
+            
+            return validated_response
         else:
             print(f"[BASE_AGENT] 💬 No tools available - calling LLM without tools")
             llm_response = await provider_manager.complete(messages)
-        
-        return llm_response
+            
+            # Validate LLM response
+            return self.prompt_sanitizer.validate_llm_response(llm_response, user_id)
 
     async def _execute_tool(self, state: AgentState) -> Dict[str, Any]:
         tool_calls = state["toolCallsMade"]

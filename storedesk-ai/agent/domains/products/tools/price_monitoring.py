@@ -3,7 +3,7 @@ from core.graphql_client import graphql_client
 from typing import Dict, Any, List, Optional
 
 class PriceMonitoringTool(BaseTool):
-    """Tool for updating price monitoring settings for products."""    
+    """Enable or disable price/margin monitoring for selected or all products. Use for both enable and disable requests."""
     def __init__(self):
         super().__init__("price_monitoring", self.__doc__.strip())
 
@@ -16,13 +16,33 @@ class PriceMonitoringTool(BaseTool):
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "productIds": {"items": {"type": "string"}, "description": "List of product IDs to apply the change to. Required if isApplyToAllProducts is false."},
+                        "productIds": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": (
+                                "Product IDs to update. When the user says 'selected products', "
+                                "use the Available Product IDs from the system prompt. "
+                                "Leave empty when isApplyToAllProducts is true."
+                            ),
+                        },
                         "bulkPriceMonitoring": {
                             "type": "object",
                             "properties": {
-                                "isApplyToAllProducts": {"description": "Whether to apply the change to all products. Set to true if user explicitly mentions 'all products'."},
-                                "isPriceEnabled": {"description": "Whether price monitoring is enabled."},
-                                "priceThresholdPercentage": {"description": "The percentage threshold for price monitoring."}
+                                "isApplyToAllProducts": {
+                                    "type": "boolean",
+                                    "description": "True only if the user explicitly says 'all products'. False for 'selected products'.",
+                                },
+                                "isPriceEnabled": {
+                                    "type": "boolean",
+                                    "description": "true to enable price monitoring, false to disable it.",
+                                },
+                                "priceThresholdPercentage": {
+                                    "type": "number",
+                                    "description": (
+                                        "Margin/price threshold percentage when enabling. "
+                                        "Use 0 when disabling price monitoring."
+                                    ),
+                                },
                             },
                             "required": ["isApplyToAllProducts", "isPriceEnabled", "priceThresholdPercentage"]
                         }
@@ -39,17 +59,23 @@ class PriceMonitoringTool(BaseTool):
         
         input_data = parameters.get("bulkPriceMonitoring", {})
         product_ids = parameters.get("productIds")
+        selected_product_ids = user_context.get("selected_product_ids", []) or []
         
         print(f"[PRICE_MONITORING_TOOL] 📊 Input Data: {input_data}")
         print(f"[PRICE_MONITORING_TOOL] 🏷️ Product IDs: {product_ids}")
 
+        # Prefer UI-selected products when the model omitted productIds
+        if not input_data.get("isApplyToAllProducts") and not product_ids and selected_product_ids:
+            product_ids = list(selected_product_ids)
+            parameters["productIds"] = product_ids
+            print(f"[PRICE_MONITORING_TOOL] ✅ Using selected_product_ids from context: {product_ids}")
+
         if not input_data.get("isApplyToAllProducts") and not product_ids:
             print(f"[PRICE_MONITORING_TOOL] ❌ Validation failed: No product IDs provided for specific update")
             return {"success": False, "message": "Product IDs are required if not applying to all products.", "intent": "UPDATE_PRICE_MONITORING"}
-
+        
         if not input_data.get("isApplyToAllProducts") and product_ids:
             # Validate product_ids against selected_product_ids in user_context if available
-            selected_product_ids = user_context.get("selected_product_ids", [])
             print(f"[PRICE_MONITORING_TOOL] 🔍 Selected Product IDs from context: {selected_product_ids}")
             
             if selected_product_ids and not all(p_id in selected_product_ids for p_id in product_ids):

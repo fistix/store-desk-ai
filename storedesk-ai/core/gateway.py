@@ -7,9 +7,14 @@ from core.session_manager import session_manager
 from agent.orchestrator import orchestrator, AgentState
 from providers.manager import provider_manager
 from config.settings import settings
+from security.prompt_sanitizer import PromptSanitizer, SecurityException
+from security.security_monitor import security_monitor
 import base64
 
 router = APIRouter()
+
+# Initialize security sanitizer
+prompt_sanitizer = PromptSanitizer()
 
 async def get_user_context(x_user_id: str = Header(...), x_tenant_id: str = Header(...), x_connector_id: str = Header(...)) -> UserContext:
     return UserContext(
@@ -17,6 +22,35 @@ async def get_user_context(x_user_id: str = Header(...), x_tenant_id: str = Head
         tenant_id=x_tenant_id,
         connector_id=x_connector_id
     )
+
+async def validate_and_sanitize_input(input_text: str, user_id: str) -> str:
+    """
+    Validate and sanitize user input at gateway level using Redis
+    """
+    try:
+        # Check rate limiting
+        if await security_monitor.is_rate_limited(user_id, "input_validation", limit=20, window_minutes=1):
+            raise HTTPException(status_code=429, detail="Rate limit exceeded")
+        
+        # Check if user is blocked
+        if await security_monitor.should_block_user(user_id):
+            raise HTTPException(status_code=403, detail="Access blocked due to security concerns")
+        
+        # Sanitize input
+        sanitized_input = prompt_sanitizer.sanitize_input(input_text, user_id)
+        
+        return sanitized_input
+        
+    except SecurityException as e:
+        # Log security event
+        await security_monitor.log_security_event(
+            "security_exception",
+            user_id,
+            input_text[:100],
+            str(e),
+            "HIGH"
+        )
+        raise HTTPException(status_code=400, detail="Invalid input detected")
 
 @router.post("/api/storedesk/assist")  # Temporarily disabled for flow testing
 async def assist_endpoint(assist_request: AssistRequest, user_context: UserContext = Depends(get_user_context)):
@@ -70,14 +104,19 @@ async def assist_endpoint(assist_request: AssistRequest, user_context: UserConte
         print("[GATEWAY] ❌ Empty message content")
         raise HTTPException(status_code=400, detail="Empty message or failed transcription")
 
+    # Sanitize input at gateway level
+    print("[GATEWAY] 🛡️ Validating and sanitizing input...")
+    sanitized_message = await validate_and_sanitize_input(message_content, user_context.user_id)
+    print(f"[GATEWAY] ✅ Input sanitized: '{sanitized_message[:100]}{'...' if len(sanitized_message) > 100 else ''}'")
+
     # Add to session history
     print("[GATEWAY] 💾 Adding user message to history...")
-    await session_manager.add_to_history(session_id, "user", message_content)
+    await session_manager.add_to_history(session_id, "user", sanitized_message)
 
     # Prepare state for orchestrator
     print("[GATEWAY] 🏗️ Preparing orchestrator state...")
     initial_state = AgentState(
-        userMessage=message_content,
+        userMessage=sanitized_message,
         userContext=user_context.dict(),
         conversationHistory=conversation_history,
         pendingConfirmation=pending_confirmation,

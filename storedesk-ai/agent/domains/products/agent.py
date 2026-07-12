@@ -3,28 +3,39 @@ from agent.domains.products import product_tool_registry
 from typing import List, Dict, Any, Optional
 from langgraph.graph import StateGraph, END
 from config.settings import settings
+import re
+import uuid
 
 # Define the system prompt for the Product Agent
 PRODUCT_AGENT_SYSTEM_PROMPT = (
     "You help with product management. "
-    "ONLY use tools when the user CLEARLY and SPECIFICALLY requests stock monitoring or price tracking. "
-    "If the request is unclear, vague, or doesn't make sense for stock/price monitoring, ASK FOR CLARIFICATION instead of using tools.\n\n"
-    "IMPORTANT: Before using any tool, ask yourself:\n"
-    "1. Is the user explicitly asking for stock monitoring or price tracking?\n"
-    "2. Are the parameters clear (what to monitor, thresholds, etc.)?\n"
-    "3. Does the request make logical sense?\n"
-    "If any answer is 'no', ask for clarification.\n\n"
+    "ALWAYS use tools for enable/disable stock or price monitoring requests. "
+    "Do not answer with plain text when a tool can fulfill the request.\n\n"
+    "SELECTED PRODUCTS (CRITICAL):\n"
+    "- Product IDs may be provided below as 'Available Product IDs'. These are already selected in the UI.\n"
+    "- When the user says 'selected products', 'these products', or similar, call the tool immediately "
+    "using those Available Product IDs. Do NOT ask the user to provide or confirm product IDs.\n"
+    "- Never list Available Product IDs back and ask the user to pick — they are already selected.\n"
+    "- Only ask for product IDs if Available Product IDs are missing AND the user did not say 'all products'.\n\n"
     "Tools:\n"
-    "- stock_monitoring: ONLY for setting up stock level alerts\n"
-    "- price_monitoring: ONLY for setting up price change alerts\n\n"
-    "Product IDs: {product_ids}\n\n"
-    "Examples of CLEAR requests:\n"
-    "- 'Set stock alert when below 10 units'\n"
-    "- 'Monitor price changes for all products'\n"
-    "- 'Notify me when stock is low'\n\n"
+    "- stock_monitoring: Enable OR disable stock/quantity monitoring\n"
+    "- price_monitoring: Enable OR disable price/margin monitoring\n\n"
+    "Enable/disable mapping:\n"
+    "- Enable stock/quantity → stock_monitoring with isQuantityEnabled=true and the requested threshold\n"
+    "- Disable stock/quantity → stock_monitoring with isQuantityEnabled=false and quantityThreshold=0\n"
+    "- Enable price/margin → price_monitoring with isPriceEnabled=true and the requested percentage\n"
+    "- Disable price/margin → price_monitoring with isPriceEnabled=false and priceThresholdPercentage=0\n"
+    "- 'all products' → isApplyToAllProducts=true (no productIds needed)\n"
+    "- 'selected products' → isApplyToAllProducts=false and productIds=Available Product IDs\n\n"
+    "Examples of CLEAR requests (always call the matching tool):\n"
+    "- 'Enable quantity monitoring for selected products with threshold 5'\n"
+    "- 'Disable stock monitoring for all products'\n"
+    "- 'Enable price margin monitoring at 8 percent for selected products'\n"
+    "- 'Disable price monitoring for all products'\n"
+    "- 'Monitor price changes for all products'\n\n"
     "Examples of UNCLEAR requests (ask clarification):\n"
+    "- 'help me'\n"
     "- 'set a popular to 10 minutes'\n"
-    "- 'focus on the stock in return'\n"
     "- 'thinking about prize money'\n"
 )
 
@@ -55,6 +66,160 @@ class ProductsAgent(BaseAgent):
 
         return graph
 
+    def _extract_threshold(self, message: str) -> Optional[float]:
+        """Extract a numeric threshold from a monitoring request."""
+        patterns = [
+            r"threshold\s*(?:of|to|=|:)?\s*(\d+(?:\.\d+)?)",
+            r"(?:below|under|at)\s*(\d+(?:\.\d+)?)",
+            r"(\d+(?:\.\d+)?)\s*(?:percent|%|units?)",
+            r"(\d+(?:\.\d+)?)",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, message, re.IGNORECASE)
+            if match:
+                try:
+                    return float(match.group(1))
+                except ValueError:
+                    continue
+        return None
+
+    def _is_disable_request(self, message: str) -> bool:
+        return any(kw in message for kw in ["disable", "turn off", "stop", "remove", "deactivate"])
+
+    def _is_enable_request(self, message: str) -> bool:
+        return any(kw in message for kw in ["enable", "set", "monitor", "alert", "track", "turn on", "notify", "start"])
+
+    def _build_monitoring_fallback_tool_call(self, state: AgentState) -> Optional[List[Dict[str, Any]]]:
+        """
+        Deterministic fallback when the LLM returns text instead of a tool call
+        for a clear stock/price enable or disable request.
+        """
+        selected_product_ids = state.get("userContext", {}).get("selected_product_ids", []) or []
+        message = (state.get("userMessage") or "").lower()
+
+        is_stock = any(kw in message for kw in ["stock", "quantity", "inventory", "qty"])
+        is_price = any(kw in message for kw in ["price", "margin", "profit"])
+        if not is_stock and not is_price:
+            return None
+        # Prefer the more specific domain when both words appear
+        if is_stock and is_price:
+            if "price" in message or "margin" in message:
+                is_stock = False
+            else:
+                is_price = False
+
+        is_disable = self._is_disable_request(message)
+        is_enable = self._is_enable_request(message) and not is_disable
+        if not is_disable and not is_enable:
+            return None
+
+        apply_to_all = "all products" in message or ("all" in message and "product" in message)
+        if not apply_to_all and not selected_product_ids:
+            return None
+
+        threshold = self._extract_threshold(message)
+        if is_disable:
+            threshold = 0 if threshold is None else threshold
+        elif threshold is None:
+            # Enable without a threshold is ambiguous — don't invent one
+            return None
+
+        product_ids = [] if apply_to_all else list(selected_product_ids)
+
+        if is_stock:
+            print(
+                f"[PRODUCTS AGENT] 🛠️ Fallback tool call: stock_monitoring "
+                f"(disable={is_disable}, all={apply_to_all}, threshold={threshold})"
+            )
+            return [{
+                "id": f"fallback_{uuid.uuid4().hex[:8]}",
+                "type": "function",
+                "function": {
+                    "name": "stock_monitoring",
+                    "arguments": {
+                        "productIds": product_ids,
+                        "bulkStockMonitoring": {
+                            "isApplyToAllProducts": apply_to_all,
+                            "isQuantityEnabled": not is_disable,
+                            "quantityThreshold": int(threshold),
+                        },
+                    },
+                },
+            }]
+
+        print(
+            f"[PRODUCTS AGENT] 🛠️ Fallback tool call: price_monitoring "
+            f"(disable={is_disable}, all={apply_to_all}, threshold={threshold})"
+        )
+        return [{
+            "id": f"fallback_{uuid.uuid4().hex[:8]}",
+            "type": "function",
+            "function": {
+                "name": "price_monitoring",
+                "arguments": {
+                    "productIds": product_ids,
+                    "bulkPriceMonitoring": {
+                        "isApplyToAllProducts": apply_to_all,
+                        "isPriceEnabled": not is_disable,
+                        "priceThresholdPercentage": float(threshold),
+                    },
+                },
+            },
+        }]
+
+    def _llm_asked_for_product_ids(self, content: str) -> bool:
+        if not content:
+            return False
+        lowered = content.lower()
+        return any(
+            phrase in lowered
+            for phrase in [
+                "which products",
+                "specify which products",
+                "provide the product",
+                "product ids",
+                "product id",
+                "available list",
+            ]
+        )
+
+    def _process_tool_calls(self, state: AgentState, tool_calls: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Apply confirmation rules and return the next agent state update."""
+        for i, tool_call in enumerate(tool_calls):
+            tool_name = tool_call.get("function", {}).get("name", "unknown")
+            tool_args = tool_call.get("function", {}).get("arguments", {})
+            print(f"[PRODUCTS AGENT] 🔧 Tool {i + 1}: {tool_name}")
+            print(f"[PRODUCTS AGENT] 📝 Tool args: {tool_args}")
+
+            if tool_name not in ["stock_monitoring", "price_monitoring"]:
+                continue
+
+            bulk_data = tool_args.get("bulkStockMonitoring") or tool_args.get("bulkPriceMonitoring", {})
+            is_apply_to_all = bool(bulk_data.get("isApplyToAllProducts", False))
+
+            product_ids = tool_args.get("productIds", [])
+            if isinstance(product_ids, str) and product_ids.lower() == "all":
+                is_apply_to_all = True
+
+            user_message = (state.get("userMessage") or "").lower()
+            if "all products" in user_message:
+                is_apply_to_all = True
+
+            if is_apply_to_all:
+                print("[PRODUCTS AGENT] ⚠️ Confirmation required for 'all products' operation")
+                confirmation_question = (
+                    f"Are you sure you want to apply this {tool_name.replace('_', ' ')} to all products?"
+                )
+                return {
+                    "toolCallsMade": tool_calls,
+                    "requiresConfirmation": True,
+                    "clarificationQuestion": confirmation_question,
+                    "finalResponse": {"message": confirmation_question, "actionsExecuted": []},
+                }
+
+        print("[PRODUCTS AGENT] ✅ Proceeding with tool execution")
+        return {"toolCallsMade": tool_calls}
+
     async def _call_llm_node(self, state: AgentState) -> Dict[str, Any]:
         print("[PRODUCTS AGENT] 🤖 CALL_LLM_NODE")
         user_message = state.get("userMessage", "")
@@ -84,44 +249,19 @@ class ProductsAgent(BaseAgent):
                 if "tool_calls" in llm_response and llm_response["tool_calls"]:
                     tool_calls = llm_response["tool_calls"]
                     print(f"[PRODUCTS AGENT] 🔧 Tool calls detected: {len(tool_calls)}")
-                    
-                    for i, tool_call in enumerate(tool_calls):
-                        tool_name = tool_call.get("function", {}).get("name", "unknown")
-                        tool_args = tool_call.get("function", {}).get("arguments", {})
-                        print(f"[PRODUCTS AGENT] 🔧 Tool {i+1}: {tool_name}")
-                        print(f"[PRODUCTS AGENT] 📝 Tool args: {tool_args}")
-                        
-                        # Check for confirmation requirement
-                        if tool_name in ["stock_monitoring", "price_monitoring"]:
-                            # Check parsed bulk data
-                            bulk_data = tool_args.get("bulkStockMonitoring") or tool_args.get("bulkPriceMonitoring", {})
-                            is_apply_to_all = bulk_data.get("isApplyToAllProducts", False)
-                            
-                            # Also check raw parameters for 'all' string
-                            product_ids = tool_args.get("productIds", [])
-                            if isinstance(product_ids, str) and product_ids.lower() == "all":
-                                is_apply_to_all = True
-                            
-                            # Check if user message contains "all products" and no specific IDs
-                            user_message = state.get("userMessage", "").lower()
-                            if "all products" in user_message and not product_ids:
-                                is_apply_to_all = True
-                            
-                            if is_apply_to_all:
-                                print("[PRODUCTS AGENT] ⚠️ Confirmation required for 'all products' operation")
-                                confirmation_question = f"Are you sure you want to apply this {tool_name.replace('_', ' ')} to all products?"
-                                return {
-                                    "toolCallsMade": tool_calls,
-                                    "requiresConfirmation": True,
-                                    "clarificationQuestion": confirmation_question,
-                                    "finalResponse": {"message": confirmation_question, "actionsExecuted": []}
-                                }
-                    
-                    # Normal tool execution (no confirmation needed)
-                    print("[PRODUCTS AGENT] ✅ Proceeding with tool execution")
-                    return {
-                        "toolCallsMade": tool_calls
-                    }
+                    return self._process_tool_calls(state, tool_calls)
+
+                # LLM returned text only — synthesize a tool call for clear monitoring intents
+                content = llm_response.get("content", "") if isinstance(llm_response, dict) else ""
+                fallback_calls = self._build_monitoring_fallback_tool_call(state)
+                if fallback_calls:
+                    reason = (
+                        "LLM asked for product IDs already in context"
+                        if self._llm_asked_for_product_ids(content)
+                        else "clear monitoring request without tool call"
+                    )
+                    print(f"[PRODUCTS AGENT] 🛠️ Overriding text response ({reason})")
+                    return self._process_tool_calls(state, fallback_calls)
             
             # No tool calls, just text response
             print("[PRODUCTS AGENT] 💬 No tool calls - text response only")
