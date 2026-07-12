@@ -142,16 +142,20 @@ class GeminiProvider(LLMProvider):
             # Check if content specifically mentions this tool type
             tool_mentioned = False
             
-            if "stock_monitoring" in tool_name.lower():
-                # Only detect stock monitoring if content mentions stock-related terms
-                stock_keywords = ["stock", "quantity", "alert"]
-                if any(keyword in content.lower() for keyword in stock_keywords):
-                    tool_mentioned = True
-            elif "price_monitoring" in tool_name.lower():
-                # Only detect price monitoring if content mentions price-related terms
-                price_keywords = ["price", "margin", "percentage"]
-                if any(keyword in content.lower() for keyword in price_keywords):
-                    tool_mentioned = True
+            # First check if LLM explicitly said no tools needed
+            if '"tool": "none"' in content or '"tool":"none"' in content:
+                tool_mentioned = False
+            else:
+                if "stock_monitoring" in tool_name.lower():
+                    # Only detect stock monitoring if content mentions stock-related terms
+                    stock_keywords = ["stock", "quantity", "alert"]
+                    if any(keyword in content.lower() for keyword in stock_keywords):
+                        tool_mentioned = True
+                elif "price_monitoring" in tool_name.lower():
+                    # Only detect price monitoring if content mentions price-related terms
+                    price_keywords = ["price", "margin", "percentage"]
+                    if any(keyword in content.lower() for keyword in price_keywords):
+                        tool_mentioned = True
             
             if tool_mentioned:
                 print(f"[GEMINI] ✅ Tool {tool_name} detected in response")
@@ -202,12 +206,31 @@ class GeminiProvider(LLMProvider):
             args["bulkStockMonitoring"]["quantityThreshold"] = 10
             print(f"[GEMINI] ⚠️ No threshold found, using default: 10")
         
+        # Extract product IDs from JSON response
+        product_ids = []
+        product_ids_match = re.search(r'"productIds"\s*:\s*\[([^\]]*)\]', content)
+        if product_ids_match:
+            ids_str = product_ids_match.group(1)
+            # Extract individual IDs (handle both UUID strings and numbers)
+            # First try to extract quoted strings (UUIDs)
+            uuid_matches = re.findall(r'"([^"]+)"', ids_str)
+            if uuid_matches:
+                # Use UUID strings as-is
+                product_ids = uuid_matches
+                print(f"[GEMINI] ✅ Extracted product IDs (UUIDs): {product_ids}")
+            else:
+                # Fallback to extracting numbers
+                id_matches = re.findall(r'(\d+)', ids_str)
+                if id_matches:
+                    product_ids = [int(id_match) for id_match in id_matches]
+                    print(f"[GEMINI] ✅ Extracted product IDs (numbers): {product_ids}")
+        
         # Check for "all products"
         if "all products" in content.lower():
             args["bulkStockMonitoring"]["isApplyToAllProducts"] = True
         else:
-            # Will need product IDs from context
-            args["productIds"] = []  # Will be filled by agent
+            # Use extracted product IDs or empty array
+            args["productIds"] = product_ids
         
         return args
     
@@ -236,12 +259,31 @@ class GeminiProvider(LLMProvider):
             args["bulkPriceMonitoring"]["priceThresholdPercentage"] = 10.0
             print(f"[GEMINI] ⚠️ No percentage found, using default: 10.0")
         
+        # Extract product IDs from JSON response
+        product_ids = []
+        product_ids_match = re.search(r'"productIds"\s*:\s*\[([^\]]*)\]', content)
+        if product_ids_match:
+            ids_str = product_ids_match.group(1)
+            # Extract individual IDs (handle both UUID strings and numbers)
+            # First try to extract quoted strings (UUIDs)
+            uuid_matches = re.findall(r'"([^"]+)"', ids_str)
+            if uuid_matches:
+                # Use UUID strings as-is
+                product_ids = uuid_matches
+                print(f"[GEMINI] ✅ Extracted product IDs (UUIDs) for price monitoring: {product_ids}")
+            else:
+                # Fallback to extracting numbers
+                id_matches = re.findall(r'(\d+)', ids_str)
+                if id_matches:
+                    product_ids = [int(id_match) for id_match in id_matches]
+                    print(f"[GEMINI] ✅ Extracted product IDs (numbers) for price monitoring: {product_ids}")
+        
         # Check for "all products"
         if "all products" in content.lower():
             args["bulkPriceMonitoring"]["isApplyToAllProducts"] = True
         else:
-            # Will need product IDs from context
-            args["productIds"] = []  # Will be filled by agent
+            # Use extracted product IDs or empty array
+            args["productIds"] = product_ids
         
         return args
 
