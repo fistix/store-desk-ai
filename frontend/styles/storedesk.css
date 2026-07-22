@@ -1,0 +1,82 @@
+:root {
+  --ink-950: #0b1220;
+  --ink-900: #121a2b;
+  --ink-700: #334155;
+  --ink-500: #64748b;
+  --ink-100: #e8eef6;
+  --ink-50: #f4f7fb;
+  --teal-700: #0f766e;
+  --teal-600: #0d9488;
+  --teal-500: #14b8a6;
+  --teal-100: #ccfbf1;
+  --coral-600: #e11d48;
+  --surface: rgba(255, 255, 255, 0.86);
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--ink-50);
+  color: var(--ink-900);
+}
+
+body {
+  background-image:
+    radial-gradient(ellipse 80% 50% at 10% -10%, rgba(20, 184, 166, 0.18), transparent 55%),
+    radial-gradient(ellipse 60% 40% at 100% 0%, rgba(15, 23, 42, 0.08), transparent 50%),
+    linear-gradient(180deg, #eef4f8 0%, #f7fafc 45%, #eef2f6 100%);
+  background-attachment: fixed;
+}
+
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 rgba(225, 29, 72, 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 12px rgba(225, 29, 72, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(225, 29, 72, 0);
+  }
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.sd-panel {
+  background: var(--surface);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 1rem;
+  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.04), 0 12px 32px -16px rgba(15, 23, 42, 0.28);
+}
+
+.sd-fade-up {
+  animation: fade-up 0.35s ease-out both;
+}
+
+.sd-recording {
+  animation: pulse-ring 1.4s ease-out infinite;
+}
+
+.sd-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.sd-scroll::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.35);
+  border-radius: 999px;
+}
+
+.sd-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}

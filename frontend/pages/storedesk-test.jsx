@@ -306,260 +306,350 @@ export default function StoreDeskTest() {
 
   if (process.env.NEXT_PUBLIC_STOREDESK_TEST_ENABLED !== 'true') {
     return (
-      <div className="min-h-screen bg-gray-100 flex items-center justify-center">
-        <div className="bg-white p-8 rounded-lg shadow-md">
-          <h1 className="text-2xl font-bold text-gray-800">Test Page Disabled</h1>
-          <p className="text-gray-600 mt-2">Set NEXT_PUBLIC_STOREDESK_TEST_ENABLED=true to enable</p>
+      <div className="min-h-screen flex items-center justify-center p-6">
+        <div className="sd-panel max-w-md w-full p-8 text-center">
+          <p className="font-display text-2xl font-semibold text-ink-900">StoreDesk</p>
+          <h1 className="mt-3 text-lg font-medium text-ink-700">Test page disabled</h1>
+          <p className="mt-2 text-sm text-ink-500">
+            Set <code className="text-teal-700">NEXT_PUBLIC_STOREDESK_TEST_ENABLED=true</code> to enable.
+          </p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-100 p-4">
-      <div className="max-w-7xl mx-auto">
-        <h1 className="text-3xl font-bold text-gray-800 mb-6">StoreDesk AI Test Interface</h1>
-        
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left Panel - Input Controls */}
-          <div className="bg-white rounded-lg shadow-md p-6">
-            <h2 className="text-xl font-semibold mb-4">Input Controls</h2>
-            
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Session ID: {isClient ? sessionId : 'Loading...'}
-              </label>
-              <button 
-                onClick={resetSession}
-                disabled={!isClient}
-                className="bg-blue-500 text-white px-3 py-1 rounded text-sm hover:bg-blue-600 disabled:bg-gray-400"
-              >
-                Reset Session
-              </button>
-            </div>
-
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Connector ID
-              </label>
-              <input
-                type="text"
-                value={connectorId}
-                onChange={(e) => setConnectorId(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md"
-              />
-            </div>
-
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Message
-              </label>
-              <textarea
-                value={message}
-                onChange={(e) => setMessage(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                rows={3}
-                disabled={isLoading}
-                placeholder={pendingConfirmation ? "Say or type 'yes' to confirm, 'no' to cancel..." : "Type your command here..."}
-              />
-            </div>
-
-            <div className="mb-4 flex gap-2">
-              <button
-                onClick={handleTextSubmit}
-                disabled={isLoading || !message.trim()}
-                className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 disabled:bg-gray-400"
-              >
-                Submit Text
-              </button>
-              <button
-                type="button"
-                onClick={toggleRecording}
-                disabled={isLoading}
-                className={`px-4 py-2 rounded text-white ${
-                  isRecording ? 'bg-red-500 hover:bg-red-600' : 'bg-blue-500 hover:bg-blue-600'
-                } disabled:bg-gray-400`}
-                title={
-                  isRecording
-                    ? 'Click to stop and send'
-                    : pendingConfirmation
-                      ? 'Reply by voice: say yes or no'
-                      : 'Click to start, speak, then click again to stop'
-                }
-              >
-                {isRecording ? 'Stop Voice' : 'Start Voice'}
-              </button>
-            </div>
-
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Selected Products
-              </label>
-              <div className="space-y-2 max-h-40 overflow-y-auto">
-                {testProducts.map(product => (
-                  <label key={product.id} className="flex items-center">
-                    <input
-                      type="checkbox"
-                      checked={selectedProducts.includes(product.id)}
-                      onChange={() => handleProductToggle(product.id)}
-                      className="mr-2"
-                    />
-                    <span className="text-sm">{product.name}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Test Prompts
-              </label>
-              <div className="space-y-2">
-                {Object.entries(testPrompts).map(([category, prompts]) => (
-                  <details key={category} className="border border-gray-200 rounded p-2">
-                    <summary className="cursor-pointer text-sm font-medium">{category}</summary>
-                    <div className="mt-2 space-y-1">
-                      {prompts.map((prompt, index) => (
-                        <button
-                          key={index}
-                          onClick={() => setMessage(prompt)}
-                          className="block w-full text-left text-xs bg-gray-50 hover:bg-gray-100 p-1 rounded"
-                        >
-                          {prompt}
-                        </button>
-                      ))}
-                    </div>
-                  </details>
-                ))}
-              </div>
-            </div>
+    <div className="min-h-screen">
+      <header className="sticky top-0 z-20 border-b border-ink-100/80 bg-white/75 backdrop-blur-md">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-4 py-4 sm:px-6">
+          <div>
+            <p className="font-display text-2xl font-bold tracking-tight text-ink-950 sm:text-3xl">
+              StoreDesk
+            </p>
+            <p className="mt-0.5 text-sm text-ink-500">AI assist playground</p>
           </div>
-
-          {/* Middle Panel - Conversation */}
-          <div className="bg-white rounded-lg shadow-md p-6">
-            <h2 className="text-xl font-semibold mb-4">Conversation</h2>
-            <div className="space-y-4 max-h-96 overflow-y-auto">
-              {conversation.map((msg, index) => (
-                <div key={index} className={`p-3 rounded-lg ${
-                  msg.type === 'user' ? 'bg-blue-100 ml-8' :
-                  msg.type === 'error' ? 'bg-red-100' : 'bg-gray-100 mr-8'
-                }`}>
-                  <div className="flex justify-between items-start mb-1">
-                    <span className="font-medium text-sm">
-                      {msg.type === 'user' ? 'User' : 
-                       msg.type === 'error' ? 'Error' : 'StoreDesk AI'}
-                    </span>
-                    {msg.provider && (
-                      <span className="text-xs bg-purple-200 px-2 py-1 rounded">
-                        {msg.provider}
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-sm">{msg.content}</p>
-                  {msg.actionsExecuted && msg.actionsExecuted.length > 0 && (
-                    <div className="mt-2 text-xs">
-                      <strong>Actions:</strong>
-                      <ul className="ml-2">
-                        {msg.actionsExecuted.map((action, i) => (
-                          <li key={i}>
-                            {action.intent} - {action.success ? 'Success' : 'Failed'} 
-                            {action.affectedCount && ` (${action.affectedCount} items)`}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                  {msg.requiresConfirmation && (
-                    <div className="mt-3 space-x-2">
-                      <button 
-                        onClick={() => {
-                          setMessage('Yes proceed');
-                          setTimeout(() => submitRequest(), 100);
-                        }}
-                        disabled={isLoading}
-                        className="bg-green-500 text-white px-3 py-1 rounded text-xs hover:bg-green-600 disabled:bg-gray-400"
-                      >
-                        Confirm
-                      </button>
-                      <button 
-                        onClick={() => {
-                          setMessage('Cancel');
-                          setTimeout(() => submitRequest(), 100);
-                        }}
-                        disabled={isLoading}
-                        className="bg-red-500 text-white px-3 py-1 rounded text-xs hover:bg-red-600 disabled:bg-gray-400"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  )}
-                  {msg.clarificationQuestion && (
-                    <div className="mt-2 p-2 bg-yellow-100 rounded text-xs">
-                      <strong>Clarification needed:</strong> {msg.clarificationQuestion}
-                    </div>
-                  )}
-                </div>
-              ))}
-              {isLoading && (
-                <div className="bg-gray-100 p-3 rounded-lg mr-8">
-                  <div className="flex items-center">
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500 mr-2"></div>
-                    <span className="text-sm">Processing...</span>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Right Panel - Debug */}
-          <div className="bg-white rounded-lg shadow-md p-6">
-            <h2 className="text-xl font-semibold mb-4">Debug</h2>
-            
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Mock Scenario: {mockScenario}
-              </label>
-              <select 
-                value={mockScenario}
-                onChange={(e) => changeMockScenario(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
-              >
-                <option value="happy_path">Happy Path</option>
-                <option value="partial_failure">Partial Failure</option>
-                <option value="full_failure">Full Failure</option>
-                <option value="slow_response">Slow Response</option>
-                <option value="server_error">Server Error</option>
-                <option value="auth_failure">Auth Failure</option>
-              </select>
-            </div>
-
-            <div className="mb-4 space-y-2">
-              <button 
-                onClick={clearDebug}
-                className="bg-gray-500 text-white px-3 py-1 rounded text-sm hover:bg-gray-600"
-              >
-                Clear Debug
-              </button>
-            </div>
-
-            <div className="space-y-4">
-              <div>
-                <h3 className="text-sm font-medium mb-2">Request Payload:</h3>
-                <pre className="bg-gray-50 p-2 rounded text-xs overflow-x-auto max-h-40">
-                  {debugRequest || 'No request yet'}
-                </pre>
-              </div>
-              
-              <div>
-                <h3 className="text-sm font-medium mb-2">Response:</h3>
-                <pre className="bg-gray-50 p-2 rounded text-xs overflow-x-auto max-h-40">
-                  {debugResponse || 'No response yet'}
-                </pre>
-              </div>
-            </div>
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+            {pendingConfirmation && (
+              <span className="rounded-md bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-800">
+                Awaiting confirmation
+              </span>
+            )}
+            {isRecording && (
+              <span className="inline-flex items-center gap-1.5 rounded-md bg-coral-100 px-2.5 py-1 text-xs font-semibold text-coral-600">
+                <span className="h-1.5 w-1.5 rounded-sm bg-coral-600" />
+                Recording
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={resetSession}
+              disabled={!isClient}
+              className="rounded-lg border border-ink-100 bg-white px-3 py-1.5 text-sm font-medium text-ink-700 transition hover:border-ink-300 hover:bg-ink-50 disabled:opacity-50"
+            >
+              New session
+            </button>
           </div>
         </div>
-      </div>
+      </header>
+
+      <main className="mx-auto grid max-w-7xl gap-5 px-4 py-5 sm:px-6 lg:grid-cols-12 lg:gap-6 lg:py-8">
+        {/* Composer */}
+        <section className="sd-panel sd-fade-up p-5 sm:p-6 lg:col-span-4">
+          <div className="mb-5">
+            <h2 className="font-display text-lg font-semibold text-ink-950">Compose</h2>
+            <p className="mt-1 text-sm text-ink-500">
+              Type a command or use voice. Session stays until you reset.
+            </p>
+          </div>
+
+          <div className="mb-4 rounded-lg bg-ink-50 px-3 py-2.5">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-ink-500">Session</p>
+            <p className="mt-0.5 truncate font-mono text-xs text-ink-700">
+              {isClient ? sessionId : 'Loading…'}
+            </p>
+          </div>
+
+          <label className="mb-4 block">
+            <span className="mb-1.5 block text-sm font-medium text-ink-700">Connector ID</span>
+            <input
+              type="text"
+              value={connectorId}
+              onChange={(e) => setConnectorId(e.target.value)}
+              className="w-full rounded-lg border border-ink-100 bg-white px-3 py-2.5 text-sm text-ink-900 outline-none transition focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20"
+            />
+          </label>
+
+          <label className="mb-3 block">
+            <span className="mb-1.5 block text-sm font-medium text-ink-700">Message</span>
+            <textarea
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              rows={4}
+              disabled={isLoading}
+              placeholder={
+                pendingConfirmation
+                  ? "Say or type 'yes' to confirm, 'no' to cancel…"
+                  : 'e.g. Disable stock monitoring for all products'
+              }
+              className="w-full resize-y rounded-lg border border-ink-100 bg-white px-3 py-2.5 text-sm text-ink-900 outline-none transition placeholder:text-ink-500/70 focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 disabled:bg-ink-50"
+            />
+          </label>
+
+          <div className="mb-6 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={handleTextSubmit}
+              disabled={isLoading || !message.trim()}
+              className="inline-flex flex-1 items-center justify-center rounded-lg bg-teal-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:bg-ink-300 min-w-[8rem]"
+            >
+              Send
+            </button>
+            <button
+              type="button"
+              onClick={toggleRecording}
+              disabled={isLoading}
+              className={`inline-flex flex-1 items-center justify-center rounded-lg px-4 py-2.5 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:bg-ink-300 min-w-[8rem] ${
+                isRecording
+                  ? 'sd-recording bg-coral-600 hover:bg-coral-600'
+                  : 'bg-ink-900 hover:bg-ink-950'
+              }`}
+              title={
+                isRecording
+                  ? 'Click to stop and send'
+                  : pendingConfirmation
+                    ? 'Reply by voice: say yes or no'
+                    : 'Click to start, speak, then click again to stop'
+              }
+            >
+              {isRecording ? 'Stop voice' : 'Start voice'}
+            </button>
+          </div>
+
+          <div className="mb-6">
+            <div className="mb-2 flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-ink-700">Products</h3>
+              <span className="text-xs text-ink-500">{selectedProducts.length} selected</span>
+            </div>
+            <div className="sd-scroll max-h-40 space-y-1 overflow-y-auto rounded-lg border border-ink-100 bg-white p-2">
+              {testProducts.map((product) => {
+                const checked = selectedProducts.includes(product.id);
+                return (
+                  <label
+                    key={product.id}
+                    className={`flex cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition ${
+                      checked ? 'bg-teal-50 text-teal-700' : 'text-ink-700 hover:bg-ink-50'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => handleProductToggle(product.id)}
+                      className="h-4 w-4 accent-teal-600"
+                    />
+                    <span className="font-medium">{product.name}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+
+          <div>
+            <h3 className="mb-2 text-sm font-semibold text-ink-700">Quick prompts</h3>
+            <div className="space-y-2">
+              {Object.entries(testPrompts).map(([category, prompts]) => (
+                <details
+                  key={category}
+                  className="group rounded-lg border border-ink-100 bg-white open:bg-ink-50/60"
+                >
+                  <summary className="cursor-pointer list-none px-3 py-2.5 text-sm font-medium text-ink-700 marker:content-none [&::-webkit-details-marker]:hidden">
+                    <span className="flex items-center justify-between">
+                      {category}
+                      <span className="text-ink-500 transition group-open:rotate-180">▾</span>
+                    </span>
+                  </summary>
+                  <div className="space-y-1 border-t border-ink-100 px-2 py-2">
+                    {prompts.map((prompt, index) => (
+                      <button
+                        key={index}
+                        type="button"
+                        onClick={() => setMessage(prompt)}
+                        className="block w-full rounded-md px-2.5 py-2 text-left text-xs leading-snug text-ink-700 transition hover:bg-white hover:text-teal-700"
+                      >
+                        {prompt}
+                      </button>
+                    ))}
+                  </div>
+                </details>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* Conversation */}
+        <section className="sd-panel sd-fade-up flex min-h-[28rem] flex-col p-5 sm:p-6 lg:col-span-5" style={{ animationDelay: '60ms' }}>
+          <div className="mb-4 flex items-end justify-between gap-3">
+            <div>
+              <h2 className="font-display text-lg font-semibold text-ink-950">Conversation</h2>
+              <p className="mt-1 text-sm text-ink-500">Live replies from the AI gateway</p>
+            </div>
+            {conversation.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setConversation([])}
+                className="text-xs font-medium text-ink-500 transition hover:text-ink-900"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+
+          <div className="sd-scroll flex-1 space-y-3 overflow-y-auto pr-1">
+            {conversation.length === 0 && !isLoading && (
+              <div className="flex h-full min-h-[16rem] flex-col items-center justify-center rounded-xl border border-dashed border-ink-100 bg-ink-50/70 px-6 text-center">
+                <p className="font-display text-base font-semibold text-ink-900">No messages yet</p>
+                <p className="mt-2 max-w-xs text-sm text-ink-500">
+                  Send a text command or record a voice request to see the assist flow here.
+                </p>
+              </div>
+            )}
+
+            {conversation.map((msg, index) => (
+              <div
+                key={`${msg.timestamp}-${index}`}
+                className={`rounded-xl px-3.5 py-3 ${
+                  msg.type === 'user'
+                    ? 'ml-6 bg-teal-600 text-white'
+                    : msg.type === 'error'
+                      ? 'bg-coral-100 text-coral-600'
+                      : 'mr-6 border border-ink-100 bg-white text-ink-900'
+                }`}
+              >
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <span
+                    className={`text-[11px] font-semibold uppercase tracking-wide ${
+                      msg.type === 'user' ? 'text-teal-100' : 'text-ink-500'
+                    }`}
+                  >
+                    {msg.type === 'user' ? 'You' : msg.type === 'error' ? 'Error' : 'StoreDesk AI'}
+                  </span>
+                  {msg.provider && (
+                    <span className="rounded bg-ink-50 px-1.5 py-0.5 text-[10px] font-medium text-ink-700">
+                      {msg.provider}
+                    </span>
+                  )}
+                </div>
+                <p className="text-sm leading-relaxed">{msg.content}</p>
+
+                {msg.actionsExecuted && msg.actionsExecuted.length > 0 && (
+                  <ul className="mt-2 space-y-1 border-t border-ink-100 pt-2 text-xs text-ink-700">
+                    {msg.actionsExecuted.map((action, i) => (
+                      <li key={i}>
+                        <span className="font-medium">{action.intent}</span>
+                        {' — '}
+                        {action.success ? 'Success' : 'Failed'}
+                        {action.affectedCount != null && ` (${action.affectedCount} items)`}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                {msg.requiresConfirmation && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMessage('Yes proceed');
+                        setTimeout(() => submitRequest(), 100);
+                      }}
+                      disabled={isLoading}
+                      className="rounded-md bg-teal-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-teal-700 disabled:bg-ink-300"
+                    >
+                      Confirm
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMessage('Cancel');
+                        setTimeout(() => submitRequest(), 100);
+                      }}
+                      disabled={isLoading}
+                      className="rounded-md border border-ink-100 bg-white px-3 py-1.5 text-xs font-semibold text-ink-700 transition hover:bg-ink-50 disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
+
+                {msg.clarificationQuestion && (
+                  <div className="mt-2 rounded-md bg-amber-50 px-2.5 py-2 text-xs text-amber-900">
+                    <span className="font-semibold">Needs clarification: </span>
+                    {msg.clarificationQuestion}
+                  </div>
+                )}
+              </div>
+            ))}
+
+            {isLoading && (
+              <div className="mr-6 flex items-center gap-2 rounded-xl border border-ink-100 bg-white px-3.5 py-3 text-sm text-ink-500">
+                <span className="h-4 w-4 animate-spin rounded-full border-2 border-teal-600 border-t-transparent" />
+                Processing…
+              </div>
+            )}
+          </div>
+        </section>
+
+        {/* Debug */}
+        <section className="sd-panel sd-fade-up p-5 sm:p-6 lg:col-span-3" style={{ animationDelay: '120ms' }}>
+          <div className="mb-4 flex items-center justify-between gap-2">
+            <div>
+              <h2 className="font-display text-lg font-semibold text-ink-950">Debug</h2>
+              <p className="mt-1 text-sm text-ink-500">Gateway payload & mock scenario</p>
+            </div>
+            <button
+              type="button"
+              onClick={clearDebug}
+              className="text-xs font-medium text-ink-500 transition hover:text-ink-900"
+            >
+              Clear
+            </button>
+          </div>
+
+          <label className="mb-4 block">
+            <span className="mb-1.5 block text-sm font-medium text-ink-700">Mock scenario</span>
+            <select
+              value={mockScenario}
+              onChange={(e) => changeMockScenario(e.target.value)}
+              className="w-full rounded-lg border border-ink-100 bg-white px-3 py-2.5 text-sm text-ink-900 outline-none transition focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20"
+            >
+              <option value="happy_path">Happy path</option>
+              <option value="partial_failure">Partial failure</option>
+              <option value="full_failure">Full failure</option>
+              <option value="slow_response">Slow response</option>
+              <option value="server_error">Server error</option>
+              <option value="auth_failure">Auth failure</option>
+            </select>
+          </label>
+
+          <div className="space-y-4">
+            <div>
+              <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-ink-500">
+                Request
+              </h3>
+              <pre className="sd-scroll max-h-48 overflow-auto rounded-lg bg-ink-950 p-3 font-mono text-[11px] leading-relaxed text-teal-100">
+                {debugRequest || 'No request yet'}
+              </pre>
+            </div>
+            <div>
+              <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-ink-500">
+                Response
+              </h3>
+              <pre className="sd-scroll max-h-48 overflow-auto rounded-lg bg-ink-950 p-3 font-mono text-[11px] leading-relaxed text-teal-100">
+                {debugResponse || 'No response yet'}
+              </pre>
+            </div>
+          </div>
+        </section>
+      </main>
     </div>
   );
 }
