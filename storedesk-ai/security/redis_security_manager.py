@@ -6,7 +6,7 @@ Provides persistent user security profiles using Redis
 import json
 import logging
 import redis.asyncio as redis
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field, asdict
 import asyncio
@@ -143,34 +143,60 @@ class RedisSecurityManager:
             self.logger.error(f"[REDIS SECURITY] ❌ Error updating profile for {user_id}: {e}")
             return False
 
-    async def is_rate_limited(self, user_id: str, action: str, limit: int = 10, window_seconds: int = 60) -> bool:
+    # Fixed-window counter: INCR, then EXPIRE only when the key is new (TTL == -1).
+    # Setting EXPIRE on every request would slide/reset the window and never clear under load.
+    _FIXED_WINDOW_LUA = """
+local count = redis.call('INCR', KEYS[1])
+local ttl = redis.call('TTL', KEYS[1])
+if ttl == -1 then
+  redis.call('EXPIRE', KEYS[1], ARGV[1])
+  ttl = tonumber(ARGV[1])
+end
+return {count, ttl}
+"""
+
+    async def is_rate_limited(
+        self,
+        user_id: str,
+        action: str,
+        limit: int = 10,
+        window_seconds: int = 60,
+    ) -> Tuple[bool, int]:
         """
-        Redis-based rate limiting with atomic operations
+        Redis fixed-window rate limiting.
+
+        Returns:
+            (is_limited, retry_after_seconds)
         """
         try:
             rate_limit_key = f"{self.RATE_LIMIT_KEY_PREFIX}{user_id}:{action}"
-            
-            # Use Redis pipeline for atomic operations
-            pipe = redis_client.pipeline()
-            
-            # Increment counter and set expiry if it's a new key
-            pipe.incr(rate_limit_key)
-            pipe.expire(rate_limit_key, window_seconds)
-            
-            results = await pipe.execute()
-            current_count = results[0]
-            
-            # Check if limit exceeded
+            result = await redis_client.eval(
+                self._FIXED_WINDOW_LUA,
+                1,
+                rate_limit_key,
+                window_seconds,
+            )
+            current_count = int(result[0])
+            ttl = int(result[1])
+            retry_after = max(ttl, 1) if ttl > 0 else window_seconds
+
             if current_count > limit:
-                print(f"[REDIS SECURITY] ⚠️ Rate limit exceeded for user: {user_id}, action: {action}")
-                return True
-            
-            return False
-            
+                self.logger.warning(
+                    "Rate limit exceeded for user=%s action=%s count=%s limit=%s retry_after=%s",
+                    user_id,
+                    action,
+                    current_count,
+                    limit,
+                    retry_after,
+                )
+                return True, retry_after
+
+            return False, 0
+
         except Exception as e:
             self.logger.error(f"[REDIS SECURITY] ❌ Rate limiting error for {user_id}: {e}")
             # Fail open - allow request if Redis fails
-            return False
+            return False, 0
 
     async def should_block_user(self, user_id: str) -> bool:
         """

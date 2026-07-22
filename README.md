@@ -209,7 +209,7 @@ For production-style Compose commands and service-by-service setup, see [Deploym
 ## Security model
 
 - HMAC-SHA256 authentication with a short timestamp window prevents unsigned service calls and basic replay attacks.
-- Per-user rate limiting is applied at the Node gateway and security layer.
+- Per-user rate limiting is applied at the Node gateway (assist + voice) and again in the AI service via a Redis fixed-window counter. Both layers emit `Retry-After` / RateLimit headers on 429.
 - Inputs are checked for common injection patterns before routing and again before model use.
 - Tools validate selected product IDs and expose only known GraphQL mutations.
 - Secrets belong in ignored local environment files or a deployment secret manager.

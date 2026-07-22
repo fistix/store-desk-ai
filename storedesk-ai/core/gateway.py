@@ -30,9 +30,24 @@ async def validate_and_sanitize_input(input_text: str, user_id: str) -> str:
     Validate and sanitize user input at gateway level using Redis
     """
     try:
-        # Check rate limiting
-        if await security_monitor.is_rate_limited(user_id, "input_validation", limit=20, window_minutes=1):
-            raise HTTPException(status_code=429, detail="Rate limit exceeded")
+        # Check rate limiting (env-driven; fixed Redis window)
+        is_limited, retry_after = await security_monitor.is_rate_limited(
+            user_id,
+            "input_validation",
+            limit=settings.RATE_LIMIT_PER_USER,
+            window_seconds=settings.RATE_LIMIT_WINDOW_SECONDS,
+        )
+        if is_limited:
+            raise HTTPException(
+                status_code=429,
+                detail="Rate limit exceeded",
+                headers={
+                    "Retry-After": str(retry_after),
+                    "RateLimit-Limit": str(settings.RATE_LIMIT_PER_USER),
+                    "RateLimit-Remaining": "0",
+                    "RateLimit-Reset": str(retry_after),
+                },
+            )
         
         # Check if user is blocked
         if await security_monitor.should_block_user(user_id):

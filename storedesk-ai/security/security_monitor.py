@@ -5,7 +5,7 @@ Provides comprehensive security event monitoring and anomaly detection
 
 import logging
 import time
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timedelta
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
@@ -137,16 +137,27 @@ class SecurityMonitor:
             self.logger.error(f"[SECURITY] ❌ Error blocking user {user_id}: {e}")
             return False
 
-    async def is_rate_limited(self, user_id: str, action: str, limit: int = 10, window_minutes: int = 1) -> bool:
+    async def is_rate_limited(
+        self,
+        user_id: str,
+        action: str,
+        limit: int = 10,
+        window_minutes: int = 1,
+        window_seconds: Optional[int] = None,
+    ) -> Tuple[bool, int]:
         """
-        Check if user action is rate limited using Redis
+        Check if user action is rate limited using Redis.
+
+        Returns:
+            (is_limited, retry_after_seconds)
         """
         try:
-            return await self.redis_manager.is_rate_limited(user_id, action, limit, window_minutes * 60)
+            seconds = window_seconds if window_seconds is not None else window_minutes * 60
+            return await self.redis_manager.is_rate_limited(user_id, action, limit, seconds)
         except Exception as e:
             self.logger.error(f"[SECURITY] ❌ Rate limiting error for {user_id}: {e}")
             # Fail open - allow request if Redis fails
-            return False
+            return False, 0
 
     async def get_security_summary(self) -> Dict[str, Any]:
         """

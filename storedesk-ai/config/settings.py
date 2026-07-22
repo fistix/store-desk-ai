@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     MAX_HISTORY_TURNS: int = 20
     PROVIDER_BACKOFF_SECONDS: int = 300
     REQUEST_MAX_ITERATIONS: int = 1 #5
+    # AI-side rate limit (defense in depth behind the Node gateway)
+    RATE_LIMIT_PER_USER: int = 5
+    RATE_LIMIT_WINDOW_SECONDS: int = 60
 
     class Config:
         env_file = ".env.production" if os.getenv("ENVIRONMENT") == "production" else ".env"

@@ -58,7 +58,7 @@ router.post('/assist', storedeskRateLimit, async (req, res) => {
   }
 });
 
-router.post('/voice-to-text', async (req, res) => {
+router.post('/voice-to-text', storedeskRateLimit, async (req, res) => {
   try {
     const { audioBase64 } = req.body;
     
