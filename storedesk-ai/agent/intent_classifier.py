@@ -132,6 +132,6 @@ class IntentClassifier:
         Determine if intent should route to products domain
         """
         return (
-            intent_result.intent in ["stock_monitoring", "price_monitoring"] and
+            intent_result.intent in ["all_monitoring", "stock_monitoring", "price_monitoring"] and
             intent_result.confidence > 0.3  # Minimum confidence threshold
         )

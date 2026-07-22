@@ -1,4 +1,5 @@
 import os
+import logging
 from typing import List, Dict, Any, Optional
 from langgraph.graph import StateGraph, END
 from config.settings import settings
@@ -11,6 +12,8 @@ from .semantic_intent_classifier import SemanticIntentClassifier
 from .llm_intent_classifier import LLMIntentClassifier
 from security.prompt_sanitizer import PromptSanitizer, SecurityException
 from security.security_monitor import security_monitor
+
+logger = logging.getLogger(__name__)
 
 # Define the orchestrator system prompt
 ORCHESTRATOR_SYSTEM_PROMPT = (
@@ -31,25 +34,20 @@ class Orchestrator:
         
         # Initialize intent classifier based on configuration
         use_llm_routing = os.getenv("USE_LLM_FOR_AGENT_ROUTING", "false").lower() == "true"
-        provider_priority = os.getenv("LLM_ROUTING_PROVIDER_PRIORITY", "gemini,openai,groq")
+        provider_priority = os.getenv("LLM_ROUTING_PROVIDER_PRIORITY", "gemini,openai")
         
         if use_llm_routing:
-            print("[ORCHESTRATOR] 🤖 Using LLM-based intent classification")
             self.intent_classifier = LLMIntentClassifier(use_llm_routing=True, provider_priority=provider_priority)
         else:
-            print("[ORCHESTRATOR] 📊 Using semantic intent classification")
             self.intent_classifier = SemanticIntentClassifier()
         
-        print("[ORCHESTRATOR] 🚀 INITIALIZING ORCHESTRATOR")
-        print("[ORCHESTRATOR] 📋 Loading domain agents...")
-        
         self.domains = {name: cls() for name, cls in domain_registry.domains.items()}
-        print(f"[ORCHESTRATOR] ✅ Loaded {len(self.domains)} domains: {list(self.domains.keys())}")
-        
-        print("[ORCHESTRATOR] 🏗️ Building LangGraph...")
         self.graph = self._build_graph()
-        print("[ORCHESTRATOR] ✅ Graph built successfully")
-        print("[ORCHESTRATOR] 🎯 Orchestrator ready for requests")
+        logger.info(
+            "Orchestrator ready with domains=%s router=%s",
+            list(self.domains.keys()),
+            type(self.intent_classifier).__name__,
+        )
 
     def _build_graph(self) -> StateGraph:
         graph = StateGraph(AgentState)
@@ -73,33 +71,12 @@ class Orchestrator:
             }
         )
 
-        # Use ML-based routing decision from _route_to_domain_node
-        def route_decision(state):
-            routing_decision = state.get("routing_decision", "clarification")
-            matched_keywords = state.get("matched_keywords", [])
-            intent_confidence = state.get("intent_confidence", 0.0)
-            
-            print(f"[ORCHESTRATOR] ROUTING DECISION")
-            print(f"[ORCHESTRATOR] Message: {state.get('userMessage', '')[:100]}{'...' if len(state.get('userMessage', '')) > 100 else ''}")
-            print(f"[ORCHESTRATOR] Matched keywords: {matched_keywords}")
-            print(f"[ORCHESTRATOR] Routing decision: {routing_decision}")
-            print(f"[ORCHESTRATOR] Intent confidence: {intent_confidence}")
-            print(f"[ORCHESTRATOR] Full state keys: {list(state.keys())}")
-            
-            if routing_decision == "products":
-                decision = "run_products_agent"
-                print(f"[ORCHESTRATOR] ROUTING TO: {decision} (products agent)")
-            else:
-                decision = "handle_clarification"
-                print(f"[ORCHESTRATOR] ROUTING TO: {decision} (clarification)")
-            
-            return decision
-        
         graph.add_conditional_edges(
             "route_to_domain",
             lambda state: (
-                print(f"[ORCHESTRATOR] 🔄 CONDITIONAL EDGE - routing_decision: {state.get('routing_decision')}")
-                or ("run_products_agent" if state.get("routing_decision") == "products" else "handle_clarification")
+                "run_products_agent"
+                if state.get("routing_decision") == "products"
+                else "handle_clarification"
             ),
             {
                 "run_products_agent": "run_products_agent",
@@ -127,39 +104,56 @@ class Orchestrator:
             # Check for affirmative messages
             if any(keyword in user_message for keyword in ["yes", "confirm", "proceed", "ok", "sure", "do it"]):
                 print("[ORCHESTRATOR] ✅ User confirmed - proceeding with stored action")
-                
-                # Apply parsing logic to ensure isApplyToAllProducts is set correctly
-                parameters = pending_confirmation["pendingParameters"].copy()
-                tool_name = pending_confirmation["pendingIntent"]
-                
-                if tool_name in ["stock_monitoring", "price_monitoring"]:
-                    # Check conversation history for "all products" in the original request
-                    conversation_history = state.get("conversationHistory", [])
-                    original_request = ""
-                    # Search entire history for the original request with "all products"
-                    for msg in conversation_history:
-                        if msg.get("role") == "user" and "all products" in msg.get("content", "").lower():
-                            original_request = msg.get("content", "")
-                            break
-                    
-                    print(f"[ORCHESTRATOR] 📝 Original request with 'all products': '{original_request}'")
-                    
-                    # If original request mentioned "all products", set isApplyToAllProducts to True
-                    if original_request:
-                        print("[ORCHESTRATOR] ✅ Setting isApplyToAllProducts to True based on original request")
-                        if tool_name == "stock_monitoring" and "bulkStockMonitoring" in parameters:
-                            parameters["bulkStockMonitoring"]["isApplyToAllProducts"] = True
-                        elif tool_name == "price_monitoring" and "bulkPriceMonitoring" in parameters:
-                            parameters["bulkPriceMonitoring"]["isApplyToAllProducts"] = True
-                
+
+                # Restore every stored tool call (supports multi-tool actions like
+                # disabling both stock and price monitoring). Fall back to the legacy
+                # single-intent fields for confirmations stored before this change.
+                pending_tool_calls = pending_confirmation.get("pendingToolCalls")
+                if not pending_tool_calls:
+                    pending_tool_calls = [{
+                        "function": {
+                            "name": pending_confirmation["pendingIntent"],
+                            "arguments": pending_confirmation["pendingParameters"],
+                        }
+                    }]
+
+                # Determine whether the original request targeted all products.
+                conversation_history = state.get("conversationHistory", [])
+                original_request = ""
+                for msg in conversation_history:
+                    if msg.get("role") == "user" and "all products" in msg.get("content", "").lower():
+                        original_request = msg.get("content", "")
+                        break
+                print(f"[ORCHESTRATOR] 📝 Original request with 'all products': '{original_request}'")
+
+                restored_tool_calls = []
+                for tool_call in pending_tool_calls:
+                    function = tool_call.get("function", {})
+                    tool_name = function.get("name")
+                    arguments = dict(function.get("arguments", {}) or {})
+
+                    if original_request and tool_name in ["stock_monitoring", "price_monitoring"]:
+                        print(f"[ORCHESTRATOR] ✅ Setting isApplyToAllProducts to True for {tool_name}")
+                        if tool_name == "stock_monitoring" and "bulkStockMonitoring" in arguments:
+                            arguments["bulkStockMonitoring"] = {
+                                **arguments["bulkStockMonitoring"],
+                                "isApplyToAllProducts": True,
+                            }
+                        elif tool_name == "price_monitoring" and "bulkPriceMonitoring" in arguments:
+                            arguments["bulkPriceMonitoring"] = {
+                                **arguments["bulkPriceMonitoring"],
+                                "isApplyToAllProducts": True,
+                            }
+
+                    restored_tool_calls.append({
+                        "function": {"name": tool_name, "arguments": arguments}
+                    })
+
+                print(f"[ORCHESTRATOR] 🔧 Restoring {len(restored_tool_calls)} tool call(s) from confirmation")
+
                 return {
                     "userMessage": state.get("userMessage", ""),  # Keep original user message
-                    "toolCallsMade": [{
-                        "function": {
-                            "name": tool_name,
-                            "arguments": parameters
-                        }
-                    }],
+                    "toolCallsMade": restored_tool_calls,
                     "userContext": pending_confirmation["userContext"],
                     "pendingConfirmation": None,
                     "requiresConfirmation": False
@@ -234,13 +228,15 @@ class Orchestrator:
                 "MEDIUM"
             )
         
-        # Use ML-based intent classification
-        intent_result = await self.intent_classifier.classify_intent(user_message)
+        # Use ML-based intent classification (pass recent history for follow-ups)
+        intent_result = await self.intent_classifier.classify_intent(
+            user_message, state.get("conversationHistory", [])
+        )
         print(f"[ORCHESTRATOR] 🎯 ML Intent: {intent_result.intent} (confidence: {intent_result.confidence:.2f})")
         print(f"[ORCHESTRATOR] 🔍 Entities: {intent_result.entities}")
         
         # Route based on ML classification with confidence threshold
-        if intent_result.intent in ["stock_monitoring", "price_monitoring"] and intent_result.confidence > 0.3:
+        if intent_result.intent in ["all_monitoring", "stock_monitoring", "price_monitoring"] and intent_result.confidence > 0.3:
             print("[ORCHESTRATOR] ✅ Routing to PRODUCTS domain")
             result_state = {
                 **state,  # Merge existing state

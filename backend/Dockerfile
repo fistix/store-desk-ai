@@ -1,12 +1,12 @@
 # Multi-stage Dockerfile - NodeJS Backend
 # Optimized for both development and production builds
 
-FROM node:18-alpine AS base
+FROM node:22-alpine AS base
 WORKDIR /app
 
 # Copy package files and install dependencies
 COPY package*.json ./
-RUN npm ci --only=production
+RUN npm ci --omit=dev
 
 # Development stage
 FROM base AS development

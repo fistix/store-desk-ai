@@ -1,19 +1,27 @@
 import os
+import asyncio
 import httpx
 import json
 import hashlib
+import logging
 from typing import Dict, Any, Optional
 from config.settings import settings
 from fastapi import HTTPException
 from httpx import AsyncClient, ConnectError, HTTPStatusError
+
+logger = logging.getLogger(__name__)
 
 class GraphQLClient:
     def __init__(self):
         self.client = AsyncClient(base_url=settings.NODEJS_GRAPHQL_URL, timeout=10)
         self.service_key = settings.SERVICE_ACCOUNT_KEY
 
-    async def execute_mutation(self, mutation_name: str, variables: dict, user_context: dict) -> dict:
-        query = f"""mutation {mutation_name}($input: {mutation_name}Input!) {{
+    async def execute_mutation(self, mutation_name: str, variables: dict, user_context: dict, input_type: Optional[str] = None) -> dict:
+        # The GraphQL input type name does not always match "{mutation_name}Input"
+        # (e.g. updateBulkStockMonitoringCommand -> UpdateBulkStockMonitoringInput),
+        # so callers pass the exact schema input type explicitly.
+        input_type = input_type or f"{mutation_name}Input"
+        query = f"""mutation {mutation_name}($input: {input_type}!) {{
             {mutation_name}(input: $input) {{
                 isSuccess
                 message
@@ -29,9 +37,7 @@ class GraphQLClient:
             "X-Connector-Id": user_context.get("connector_id"),
         }
         
-        # Debug logging
-        print(f"[GRAPHQL_CLIENT] 🔑 Service key: {self.service_key}")
-        print(f"[GRAPHQL_CLIENT] 🔑 Headers: {headers}")
+        logger.debug("Executing GraphQL mutation %s at %s", mutation_name, settings.NODEJS_GRAPHQL_URL)
 
         attempts = 0
         max_attempts = 3
@@ -46,8 +52,8 @@ class GraphQLClient:
                 )
                 response.raise_for_status()
                 data = response.json()
-                print(f"[GRAPHQL_CLIENT] 📦 Response data: {data}")
-                
+                logger.debug("GraphQL response for %s: %s", mutation_name, data)
+
                 # Normalize GraphQL errors into a consistent error model
                 if data.get("errors"):
                     return {"success": False, "message": data["errors"][0]["message"], "data": None, "error": data["errors"]}
@@ -61,25 +67,22 @@ class GraphQLClient:
                     return {"success": True, "message": "Mutation executed", "data": data["data"][mutation_name], "error": None}
                 else:
                     # Return whatever data is available
-                    print(f"[GRAPHQL_CLIENT] ⚠️ Mutation key '{mutation_name}' not found in response")
-                    print(f"[GRAPHQL_CLIENT] 📋 Available keys: {list(data['data'].keys())}")
+                    logger.warning(
+                        "Mutation key '%s' not found in response; available keys: %s",
+                        mutation_name, list(data["data"].keys()),
+                    )
                     return {"success": True, "message": "Mutation executed (partial response)", "data": data["data"], "error": None}
             except HTTPStatusError as e:
                 if 400 <= e.response.status_code < 500:
                     # 4xx errors should not be retried
                     raise HTTPException(status_code=e.response.status_code, detail=f"GraphQL client error: {e.response.text}")
-                elif e.response.status_code >= 500:
-                    # Retry for 5xx errors
-                    print(f"Attempt {attempts + 1} failed with 5xx error: {e.response.status_code}. Retrying...")
-                    await httpx.AsyncClient().aclose()
-                    await httpx.AsyncClient(base_url=settings.NODEJS_GRAPHQL_URL, timeout=10).aclose()
-                    time.sleep(backoff_factor * (2 ** attempts))
-                    attempts += 1
+                # Retry for 5xx errors
+                logger.warning("Attempt %d failed with %d. Retrying...", attempts + 1, e.response.status_code)
+                await asyncio.sleep(backoff_factor * (2 ** attempts))
+                attempts += 1
             except ConnectError as e:
-                print(f"Attempt {attempts + 1} failed with connection error: {e}. Retrying...")
-                await httpx.AsyncClient().aclose()
-                await httpx.AsyncClient(base_url=settings.NODEJS_GRAPHQL_URL, timeout=10).aclose()
-                time.sleep(backoff_factor * (2 ** attempts))
+                logger.warning("Attempt %d failed with connection error: %r. Retrying...", attempts + 1, e)
+                await asyncio.sleep(backoff_factor * (2 ** attempts))
                 attempts += 1
             except Exception as e:
                 raise HTTPException(status_code=500, detail=f"Unexpected error in GraphQL client: {e}")

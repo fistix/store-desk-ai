@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     PORT: int = 8000
     ENVIRONMENT: str = "development"
     DEBUG_ENDPOINTS_ENABLED: bool = True
+    LOG_LEVEL: str = "INFO"
 
     # Security
     HMAC_SECRET: str

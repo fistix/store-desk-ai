@@ -33,11 +33,17 @@ class SessionManager:
             return json.loads(pending_json)
         return None
 
-    async def set_pending_confirmation(self, session_id: str, intent: str, parameters: Dict[str, Any], confirmation_question: str, user_context: Dict[str, Any]):
+    async def set_pending_confirmation(self, session_id: str, intent: str, parameters: Dict[str, Any], confirmation_question: str, user_context: Dict[str, Any], tool_calls: Optional[List[Dict[str, Any]]] = None):
         key = await self._get_key(session_id, "pending_confirmation")
+        # Persist every planned tool call so multi-tool actions (e.g. disabling
+        # both stock and price monitoring) are fully restored after confirmation.
+        pending_tool_calls = tool_calls or [
+            {"function": {"name": intent, "arguments": parameters}}
+        ]
         pending_data = {
             "pendingIntent": intent,
             "pendingParameters": parameters,
+            "pendingToolCalls": pending_tool_calls,
             "confirmationQuestion": confirmation_question,
             "userContext": user_context,
             "triggeredAt": datetime.utcnow().isoformat()

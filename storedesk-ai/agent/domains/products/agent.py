@@ -3,8 +3,22 @@ from agent.domains.products import product_tool_registry
 from typing import List, Dict, Any, Optional
 from langgraph.graph import StateGraph, END
 from config.settings import settings
+import logging
 import re
 import uuid
+
+logger = logging.getLogger(__name__)
+
+
+def describe_exception(exc: Exception) -> str:
+    """Return a human-readable error string.
+
+    Starlette's HTTPException has an empty ``str()`` but carries the useful
+    message in ``.detail``. Falling back to ``repr`` guarantees at least the
+    exception type is visible for otherwise message-less errors.
+    """
+    detail = getattr(exc, "detail", None)
+    return str(detail) if detail else (str(exc) or repr(exc))
 
 # Define the system prompt for the Product Agent
 PRODUCT_AGENT_SYSTEM_PROMPT = (
@@ -26,12 +40,14 @@ PRODUCT_AGENT_SYSTEM_PROMPT = (
     "- Enable price/margin → price_monitoring with isPriceEnabled=true and the requested percentage\n"
     "- Disable price/margin → price_monitoring with isPriceEnabled=false and priceThresholdPercentage=0\n"
     "- 'all products' → isApplyToAllProducts=true (no productIds needed)\n"
-    "- 'selected products' → isApplyToAllProducts=false and productIds=Available Product IDs\n\n"
+    "- 'selected products' → isApplyToAllProducts=false and productIds=Available Product IDs\n"
+    "- 'all monitoring' / 'both monitoring' / 'stock and price' → call BOTH stock_monitoring AND price_monitoring\n\n"
     "Examples of CLEAR requests (always call the matching tool):\n"
     "- 'Enable quantity monitoring for selected products with threshold 5'\n"
     "- 'Disable stock monitoring for all products'\n"
     "- 'Enable price margin monitoring at 8 percent for selected products'\n"
     "- 'Disable price monitoring for all products'\n"
+    "- 'Disable all monitoring for all products' → call BOTH tools with isApplyToAllProducts=true and enabled=false\n"
     "- 'Monitor price changes for all products'\n\n"
     "Examples of UNCLEAR requests (ask clarification):\n"
     "- 'help me'\n"
@@ -183,11 +199,60 @@ class ProductsAgent(BaseAgent):
             ]
         )
 
+    def _describe_monitoring_actions(self, tool_calls: List[Dict[str, Any]]) -> List[str]:
+        """Build human-readable enable/disable labels for confirmation copy."""
+        actions: List[str] = []
+        for tool_call in tool_calls:
+            tool_name = tool_call.get("function", {}).get("name", "")
+            tool_args = tool_call.get("function", {}).get("arguments", {}) or {}
+
+            if tool_name == "stock_monitoring":
+                bulk = tool_args.get("bulkStockMonitoring") or {}
+                verb = "enable" if bulk.get("isQuantityEnabled", False) else "disable"
+                actions.append(f"{verb} stock monitoring")
+            elif tool_name == "price_monitoring":
+                bulk = tool_args.get("bulkPriceMonitoring") or {}
+                verb = "enable" if bulk.get("isPriceEnabled", False) else "disable"
+                actions.append(f"{verb} price monitoring")
+
+        return actions
+
+    def _build_all_products_confirmation(self, tool_calls: List[Dict[str, Any]]) -> str:
+        """Describe every planned monitoring change when confirming an all-products update."""
+        actions = self._describe_monitoring_actions(tool_calls)
+        if not actions:
+            return "Are you sure you want to update monitoring for all products?"
+
+        verbs = {action.split(" ", 1)[0] for action in actions}
+        kinds = [action.split(" ", 1)[1] for action in actions]
+
+        if len(verbs) == 1:
+            verb = next(iter(verbs))
+            if len(kinds) == 1:
+                target = kinds[0]
+            elif kinds == ["stock monitoring", "price monitoring"] or set(kinds) == {
+                "stock monitoring",
+                "price monitoring",
+            }:
+                target = "stock and price monitoring"
+            else:
+                target = " and ".join(kinds)
+            return f"Are you sure you want to {verb} {target} for all products?"
+
+        return (
+            "Are you sure you want to "
+            + " and ".join(actions)
+            + " for all products?"
+        )
+
     def _process_tool_calls(self, state: AgentState, tool_calls: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Apply confirmation rules and return the next agent state update."""
+        user_message = (state.get("userMessage") or "").lower()
+        needs_all_products_confirmation = False
+
         for i, tool_call in enumerate(tool_calls):
             tool_name = tool_call.get("function", {}).get("name", "unknown")
-            tool_args = tool_call.get("function", {}).get("arguments", {})
+            tool_args = tool_call.get("function", {}).get("arguments", {}) or {}
             print(f"[PRODUCTS AGENT] 🔧 Tool {i + 1}: {tool_name}")
             print(f"[PRODUCTS AGENT] 📝 Tool args: {tool_args}")
 
@@ -195,27 +260,31 @@ class ProductsAgent(BaseAgent):
                 continue
 
             bulk_data = tool_args.get("bulkStockMonitoring") or tool_args.get("bulkPriceMonitoring", {})
-            is_apply_to_all = bool(bulk_data.get("isApplyToAllProducts", False))
+            # isApplyToAllProducts may appear nested or at the top level of the args.
+            is_apply_to_all = bool(
+                bulk_data.get("isApplyToAllProducts", tool_args.get("isApplyToAllProducts", False))
+            )
 
             product_ids = tool_args.get("productIds", [])
             if isinstance(product_ids, str) and product_ids.lower() == "all":
                 is_apply_to_all = True
 
-            user_message = (state.get("userMessage") or "").lower()
             if "all products" in user_message:
                 is_apply_to_all = True
 
             if is_apply_to_all:
-                print("[PRODUCTS AGENT] ⚠️ Confirmation required for 'all products' operation")
-                confirmation_question = (
-                    f"Are you sure you want to apply this {tool_name.replace('_', ' ')} to all products?"
-                )
-                return {
-                    "toolCallsMade": tool_calls,
-                    "requiresConfirmation": True,
-                    "clarificationQuestion": confirmation_question,
-                    "finalResponse": {"message": confirmation_question, "actionsExecuted": []},
-                }
+                needs_all_products_confirmation = True
+
+        if needs_all_products_confirmation:
+            print("[PRODUCTS AGENT] ⚠️ Confirmation required for 'all products' operation")
+            confirmation_question = self._build_all_products_confirmation(tool_calls)
+            print(f"[PRODUCTS AGENT] 📝 Confirmation question: {confirmation_question}")
+            return {
+                "toolCallsMade": tool_calls,
+                "requiresConfirmation": True,
+                "clarificationQuestion": confirmation_question,
+                "finalResponse": {"message": confirmation_question, "actionsExecuted": []},
+            }
 
         print("[PRODUCTS AGENT] ✅ Proceeding with tool execution")
         return {"toolCallsMade": tool_calls}
@@ -271,10 +340,12 @@ class ProductsAgent(BaseAgent):
             }
             
         except Exception as e:
-            print(f"[PRODUCTS AGENT] ❌ LLM call failed: {str(e)}")
+            error_detail = describe_exception(e)
+            logger.exception("Products agent LLM call failed")
+            print(f"[PRODUCTS AGENT] ❌ LLM call failed: {error_detail}")
             return {
                 "toolCallsMade": [],
-                "finalResponse": {"message": f"Products agent error: {str(e)}", "actionsExecuted": []}
+                "finalResponse": {"message": f"Products agent error: {error_detail}", "actionsExecuted": []}
             }
 
     async def _execute_tool_node(self, state: AgentState) -> Dict[str, Any]:

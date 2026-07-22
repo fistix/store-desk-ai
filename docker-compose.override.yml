@@ -1,0 +1,78 @@
+# Loaded automatically by `docker compose`.
+# Adds local environment files, source mounts, and hot reload.
+
+services:
+  redis:
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  storedesk-ai:
+    build:
+      context: ./storedesk-ai
+      target: development
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: ./.env.dev
+        format: raw
+    environment:
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+      - UVICORN_RELOAD=1
+    volumes:
+      - ./storedesk-ai:/app
+      - pip-cache:/root/.cache/pip
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  nodejs:
+    build:
+      context: ./backend
+      target: development
+    env_file:
+      - path: ./.env.dev
+        format: raw
+    environment:
+      - PORT=4010
+    volumes:
+      - ./backend:/app
+      - backend-node-modules:/app/node_modules
+    # Reconcile node_modules with package-lock on start so dependency changes
+    # take effect without manually recreating the volume.
+    command: ["sh", "-c", "npm install --no-audit --no-fund && npm run dev"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4010/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  frontend:
+    build:
+      context: ./frontend
+      target: development
+    volumes:
+      - ./frontend:/app
+      - frontend-node-modules:/app/node_modules
+      - frontend-next:/app/.next
+    # Reconcile node_modules with package-lock on start so dependency changes
+    # (e.g. React/Next upgrades) take effect without recreating the volume.
+    command: ["sh", "-c", "npm install --no-audit --no-fund && npm run dev"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  pip-cache:
+  backend-node-modules:
+  frontend-node-modules:
+  frontend-next:

@@ -59,6 +59,13 @@ class StockMonitoringTool(BaseTool):
         print(f"[STOCK_MONITORING_TOOL] 👤 User Context: {user_context}")
         
         input_data = parameters.get("bulkStockMonitoring", {})
+        # The model sometimes places isApplyToAllProducts at the top level instead
+        # of inside bulkStockMonitoring. Normalize it and coerce to a boolean so the
+        # non-nullable GraphQL field is never sent as null.
+        if "isApplyToAllProducts" not in input_data and "isApplyToAllProducts" in parameters:
+            input_data["isApplyToAllProducts"] = parameters["isApplyToAllProducts"]
+        input_data["isApplyToAllProducts"] = bool(input_data.get("isApplyToAllProducts", False))
+
         product_ids = parameters.get("productIds")
         selected_product_ids = user_context.get("selected_product_ids", []) or []
         
@@ -73,7 +80,7 @@ class StockMonitoringTool(BaseTool):
 
         if not input_data.get("isApplyToAllProducts") and not product_ids:
             print(f"[STOCK_MONITORING_TOOL] ❌ Validation failed: No product IDs provided for specific update")
-            return {"success": False, "message": "Product IDs are required if not applying to all products.", "intent": "UPDATE_STOCK_MONITORING"}
+            return {"success": False, "message": "No products are currently selected. Please select one or more products first, or ask me to apply this to all products.", "intent": "UPDATE_STOCK_MONITORING"}
         
         if not input_data.get("isApplyToAllProducts") and product_ids:
             # Validate product_ids against selected_product_ids in user_context if available
@@ -86,9 +93,9 @@ class StockMonitoringTool(BaseTool):
         mutation_variables = {
             "productIds": product_ids if not input_data.get("isApplyToAllProducts") else [], # Empty list if applying to all
             "bulkStockMonitoring": {
-                "isApplyToAllProducts": input_data.get("isApplyToAllProducts"),
-                "isQuantityEnabled": input_data.get("isQuantityEnabled"),
-                "quantityThreshold": input_data.get("quantityThreshold")
+                "isApplyToAllProducts": bool(input_data.get("isApplyToAllProducts", False)),
+                "isQuantityEnabled": bool(input_data.get("isQuantityEnabled", False)),
+                "quantityThreshold": int(input_data.get("quantityThreshold") or 0)
             }
         }
         
@@ -99,7 +106,8 @@ class StockMonitoringTool(BaseTool):
             response = await graphql_client.execute_mutation(
                 "updateBulkStockMonitoringCommand",
                 mutation_variables,
-                user_context
+                user_context,
+                input_type="UpdateBulkStockMonitoringInput",
             )
             
             print(f"[STOCK_MONITORING_TOOL] 📦 GraphQL Response: {response}")

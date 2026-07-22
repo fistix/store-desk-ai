@@ -121,9 +121,12 @@ class SemanticIntentClassifier:
         similarities = np.dot(route_norms, query_norm.T)
         return similarities
     
-    async def classify_intent(self, message: str) -> IntentResult:
+    async def classify_intent(self, message: str, conversation_history=None) -> IntentResult:
         """
-        Classify intent using semantic similarity
+        Classify intent using semantic similarity.
+
+        conversation_history is accepted for interface parity with the LLM
+        classifier; the semantic model classifies on the message alone.
         """
         if self.model is None:
             return self._fallback_classification(message)
@@ -251,7 +254,7 @@ class SemanticIntentClassifier:
         Determine if intent should route to products domain
         """
         return (
-            intent_result.intent in ["stock_monitoring", "price_monitoring"] and
+            intent_result.intent in ["all_monitoring", "stock_monitoring", "price_monitoring"] and
             intent_result.confidence > 0.3  # Minimum confidence threshold
         )
     

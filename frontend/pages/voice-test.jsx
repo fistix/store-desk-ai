@@ -179,7 +179,7 @@ export default function VoiceTest() {
                   </div>
                 </div>
               ) : (
-                <p className="text-gray-500 italic">No transcription yet. Record audio and click "Transcribe".</p>
+                <p className="text-gray-500 italic">No transcription yet. Record audio and click “Transcribe”.</p>
               )}
             </div>
           </div>
@@ -188,10 +188,10 @@ export default function VoiceTest() {
           <div className="bg-blue-50 p-4 rounded">
             <h3 className="text-lg font-medium mb-2 text-blue-800">Instructions</h3>
             <ol className="list-decimal list-inside text-sm text-blue-700 space-y-1">
-              <li>Click "Start Recording" to begin capturing audio</li>
+              <li>Click “Start Recording” to begin capturing audio</li>
               <li>Speak clearly into your microphone</li>
-              <li>Click "Stop Recording" when finished</li>
-              <li>Click "Transcribe" to convert audio to text</li>
+              <li>Click “Stop Recording” when finished</li>
+              <li>Click “Transcribe” to convert audio to text</li>
               <li>Results will appear in the Transcription Result section</li>
             </ol>
           </div>

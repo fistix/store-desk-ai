@@ -1,6 +1,7 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 import base64
+from core.auth import verify_hmac
 from core.stt import transcribe_audio
 
 router = APIRouter(prefix="/api", tags=["voice-to-text"])
@@ -14,7 +15,10 @@ class VoiceToTextResponse(BaseModel):
     error: str = None
 
 @router.post("/voice-to-text", response_model=VoiceToTextResponse)
-async def voice_to_text(request: VoiceToTextRequest):
+async def voice_to_text(
+    request: VoiceToTextRequest,
+    _authenticated: bool = Depends(verify_hmac),
+):
     """
     Convert voice audio to text using Vosk STT
     """

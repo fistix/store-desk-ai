@@ -1,8 +1,11 @@
 import hmac
 import hashlib
+import logging
 import time
 from fastapi import Request, HTTPException, Header
 from config.settings import settings
+
+logger = logging.getLogger(__name__)
 
 async def verify_hmac(request: Request, x_hmac_signature: str = Header(None), x_timestamp: str = Header(None)):
     if not x_hmac_signature or not x_timestamp:
@@ -25,17 +28,8 @@ async def verify_hmac(request: Request, x_hmac_signature: str = Header(None), x_
         hashlib.sha256
     ).hexdigest()
 
-    # Debug logging
-    print(f"[AUTH] 🔍 Debug - Timestamp: {x_timestamp}")
-    print(f"[AUTH] 🔍 Debug - Body: {body}")
-    print(f"[AUTH] 🔍 Debug - Message: {message}")
-    print(f"[AUTH] 🔍 Debug - Computed signature: {computed_signature}")
-    print(f"[AUTH] 🔍 Debug - Received signature: {x_hmac_signature}")
-
     if not hmac.compare_digest(computed_signature, x_hmac_signature):
-        print(f"[AUTH] ❌ Signature mismatch!")
+        logger.warning("Rejected request with invalid HMAC signature")
         raise HTTPException(status_code=401, detail="Invalid signature")
     
-    print(f"[AUTH] ✅ Signature verified!")
-
     return True
