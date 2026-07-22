@@ -103,7 +103,7 @@ def test_bulk_all_monitoring_confirmation_mentions_stock_and_price():
     ]
 
     result = agent._process_tool_calls(
-        {"userMessage": "disable all monitoring for all products"},
+        {"userMessage": "Disable all monitoring for all products"},
         tool_calls,
     )
 
@@ -112,3 +112,60 @@ def test_bulk_all_monitoring_confirmation_mentions_stock_and_price():
     assert result["clarificationQuestion"] == (
         "Are you sure you want to disable stock and price monitoring for all products?"
     )
+
+
+def test_drops_price_tool_when_user_only_asked_for_stock():
+    agent = products_agent_without_runtime_dependencies()
+    tool_calls = [
+        {
+            "function": {
+                "name": "stock_monitoring",
+                "arguments": {
+                    "productIds": [],
+                    "bulkStockMonitoring": {
+                        "isApplyToAllProducts": True,
+                        "isQuantityEnabled": False,
+                        "quantityThreshold": 0,
+                    },
+                },
+            },
+        },
+        {
+            "function": {
+                "name": "price_monitoring",
+                "arguments": {
+                    "productIds": [],
+                    "bulkPriceMonitoring": {
+                        "isApplyToAllProducts": True,
+                        "isPriceEnabled": False,
+                        "priceThresholdPercentage": 0,
+                    },
+                },
+            },
+        },
+    ]
+
+    result = agent._process_tool_calls(
+        {"userMessage": "disable stock monitoring for all the product"},
+        tool_calls,
+    )
+
+    assert len(result["toolCallsMade"]) == 1
+    assert result["toolCallsMade"][0]["function"]["name"] == "stock_monitoring"
+    assert result["clarificationQuestion"] == (
+        "Are you sure you want to disable stock monitoring for all products?"
+    )
+
+
+def test_fallback_handles_all_the_product_singular():
+    agent = products_agent_without_runtime_dependencies()
+    state = {
+        "userMessage": "Disable stock monitoring for all the product",
+        "userContext": {"selected_product_ids": []},
+    }
+
+    tool_calls = agent._build_monitoring_fallback_tool_call(state)
+
+    assert tool_calls is not None
+    assert tool_calls[0]["function"]["name"] == "stock_monitoring"
+    assert tool_calls[0]["function"]["arguments"]["bulkStockMonitoring"]["isApplyToAllProducts"] is True

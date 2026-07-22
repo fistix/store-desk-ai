@@ -17,6 +17,8 @@ export default function StoreDeskTest() {
   
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
+  const recordingStartedAtRef = useRef(0);
+  const isStoppingRef = useRef(false);
 
   // Generate UUID only on client side to prevent hydration mismatch
   useEffect(() => {
@@ -69,35 +71,119 @@ export default function StoreDeskTest() {
     });
   }
 
-  const startRecording = async () => {
+  const cleanupMediaStream = (recorder) => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaRecorderRef.current = new MediaRecorder(stream);
+      recorder?.stream?.getTracks?.().forEach((track) => track.stop());
+    } catch (_) {
+      // ignore
+    }
+  };
+
+  const startRecording = async () => {
+    if (isRecording || mediaRecorderRef.current?.state === 'recording') {
+      return;
+    }
+    isStoppingRef.current = false;
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          channelCount: 1,
+        },
+      });
+      // Prefer webm/opus when available (Chrome/Firefox); fall back to browser default.
+      const preferredType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/webm')
+          ? 'audio/webm'
+          : '';
+      const recorder = preferredType
+        ? new MediaRecorder(stream, { mimeType: preferredType })
+        : new MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
       audioChunksRef.current = [];
 
-      mediaRecorderRef.current.ondataavailable = (event) => {
-        audioChunksRef.current.push(event.data);
+      recorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
       };
 
-      mediaRecorderRef.current.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+      recorder.onerror = (event) => {
+        console.error('MediaRecorder error:', event.error || event);
+        cleanupMediaStream(recorder);
+        mediaRecorderRef.current = null;
+        setIsRecording(false);
+        isStoppingRef.current = false;
+        alert('Recording failed. Please try again.');
+      };
+
+      recorder.onstop = async () => {
+        cleanupMediaStream(recorder);
+        const mimeType = recorder.mimeType || 'audio/webm';
+        const chunks = audioChunksRef.current;
+        audioChunksRef.current = [];
+        mediaRecorderRef.current = null;
+        isStoppingRef.current = false;
+
+        const audioBlob = new Blob(chunks, { type: mimeType });
+        const elapsedMs = Date.now() - recordingStartedAtRef.current;
+
+        // Only reject truly empty captures — short "yes"/"no" replies are valid.
+        if (!chunks.length || audioBlob.size === 0) {
+          alert('No audio captured. Click Start Voice, speak, then click Stop Voice.');
+          return;
+        }
+        if (elapsedMs < 350) {
+          alert('Recording was too short. Speak, then click Stop Voice.');
+          return;
+        }
+
         const audioBase64 = await blobToBase64(audioBlob);
         submitRequest(audioBase64, 'audio');
       };
 
-      mediaRecorderRef.current.start();
+      // Final chunk is emitted automatically on stop() — do not call requestData().
+      recorder.start();
+      recordingStartedAtRef.current = Date.now();
       setIsRecording(true);
     } catch (error) {
       console.error('Error starting recording:', error);
       alert('Could not access microphone');
+      setIsRecording(false);
     }
   };
 
   const stopRecording = () => {
-    if (mediaRecorderRef.current) {
-      mediaRecorderRef.current.stop();
-      mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
+    const recorder = mediaRecorderRef.current;
+    if (!recorder || isStoppingRef.current) {
+      return;
+    }
+    if (recorder.state === 'inactive') {
+      cleanupMediaStream(recorder);
+      mediaRecorderRef.current = null;
       setIsRecording(false);
+      return;
+    }
+    isStoppingRef.current = true;
+    setIsRecording(false);
+    try {
+      recorder.stop();
+    } catch (error) {
+      console.error('Error stopping recording:', error);
+      cleanupMediaStream(recorder);
+      mediaRecorderRef.current = null;
+      isStoppingRef.current = false;
+    }
+  };
+
+  const toggleRecording = () => {
+    if (isRecording || mediaRecorderRef.current?.state === 'recording') {
+      stopRecording();
+    } else {
+      startRecording();
     }
   };
 
@@ -274,7 +360,7 @@ export default function StoreDeskTest() {
                 className="w-full px-3 py-2 border border-gray-300 rounded-md"
                 rows={3}
                 disabled={isLoading}
-                placeholder={pendingConfirmation ? "Type 'yes' to confirm or 'no' to cancel..." : "Type your command here..."}
+                placeholder={pendingConfirmation ? "Say or type 'yes' to confirm, 'no' to cancel..." : "Type your command here..."}
               />
             </div>
 
@@ -287,13 +373,21 @@ export default function StoreDeskTest() {
                 Submit Text
               </button>
               <button
-                onClick={isRecording ? stopRecording : startRecording}
-                disabled={isLoading || pendingConfirmation}
+                type="button"
+                onClick={toggleRecording}
+                disabled={isLoading}
                 className={`px-4 py-2 rounded text-white ${
                   isRecording ? 'bg-red-500 hover:bg-red-600' : 'bg-blue-500 hover:bg-blue-600'
                 } disabled:bg-gray-400`}
+                title={
+                  isRecording
+                    ? 'Click to stop and send'
+                    : pendingConfirmation
+                      ? 'Reply by voice: say yes or no'
+                      : 'Click to start, speak, then click again to stop'
+                }
               >
-                {isRecording ? 'Stop Recording' : 'Start Voice'}
+                {isRecording ? 'Stop Voice' : 'Start Voice'}
               </button>
             </div>
 

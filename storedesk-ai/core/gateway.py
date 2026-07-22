@@ -101,6 +101,8 @@ async def assist_endpoint(
         audio_bytes = base64.b64decode(assist_request.audioBase64)
         try:
             message_content = await transcribe_audio(audio_bytes)
+        except HTTPException:
+            raise
         except Exception as e:
             logger.exception("Audio transcription failed")
             raise HTTPException(status_code=500, detail="Audio transcription failed") from e

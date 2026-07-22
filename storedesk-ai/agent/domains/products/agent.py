@@ -34,21 +34,26 @@ PRODUCT_AGENT_SYSTEM_PROMPT = (
     "Tools:\n"
     "- stock_monitoring: Enable OR disable stock/quantity monitoring\n"
     "- price_monitoring: Enable OR disable price/margin monitoring\n\n"
+    "TOOL SELECTION (CRITICAL):\n"
+    "- Call ONLY the tool that matches what the user asked for.\n"
+    "- Stock/quantity only → call ONLY stock_monitoring (never also call price_monitoring).\n"
+    "- Price/margin only → call ONLY price_monitoring (never also call stock_monitoring).\n"
+    "- Call BOTH tools ONLY when the user explicitly asks for both, e.g. "
+    "'all monitoring', 'both monitoring', 'stock and price', or 'price and stock'.\n\n"
     "Enable/disable mapping:\n"
     "- Enable stock/quantity → stock_monitoring with isQuantityEnabled=true and the requested threshold\n"
     "- Disable stock/quantity → stock_monitoring with isQuantityEnabled=false and quantityThreshold=0\n"
     "- Enable price/margin → price_monitoring with isPriceEnabled=true and the requested percentage\n"
     "- Disable price/margin → price_monitoring with isPriceEnabled=false and priceThresholdPercentage=0\n"
-    "- 'all products' → isApplyToAllProducts=true (no productIds needed)\n"
-    "- 'selected products' → isApplyToAllProducts=false and productIds=Available Product IDs\n"
-    "- 'all monitoring' / 'both monitoring' / 'stock and price' → call BOTH stock_monitoring AND price_monitoring\n\n"
+    "- 'all products' / 'all the products' / 'all the product' → isApplyToAllProducts=true (no productIds needed)\n"
+    "- 'selected products' → isApplyToAllProducts=false and productIds=Available Product IDs\n\n"
     "Examples of CLEAR requests (always call the matching tool):\n"
-    "- 'Enable quantity monitoring for selected products with threshold 5'\n"
-    "- 'Disable stock monitoring for all products'\n"
-    "- 'Enable price margin monitoring at 8 percent for selected products'\n"
-    "- 'Disable price monitoring for all products'\n"
-    "- 'Disable all monitoring for all products' → call BOTH tools with isApplyToAllProducts=true and enabled=false\n"
-    "- 'Monitor price changes for all products'\n\n"
+    "- 'Enable quantity monitoring for selected products with threshold 5' → ONLY stock_monitoring\n"
+    "- 'Disable stock monitoring for all products' → ONLY stock_monitoring\n"
+    "- 'Enable price margin monitoring at 8 percent for selected products' → ONLY price_monitoring\n"
+    "- 'Disable price monitoring for all products' → ONLY price_monitoring\n"
+    "- 'Disable all monitoring for all products' → BOTH tools with isApplyToAllProducts=true and enabled=false\n"
+    "- 'Monitor price changes for all products' → ONLY price_monitoring\n\n"
     "Examples of UNCLEAR requests (ask clarification):\n"
     "- 'help me'\n"
     "- 'set a popular to 10 minutes'\n"
@@ -105,6 +110,92 @@ class ProductsAgent(BaseAgent):
     def _is_enable_request(self, message: str) -> bool:
         return any(kw in message for kw in ["enable", "set", "monitor", "alert", "track", "turn on", "notify", "start"])
 
+    def _mentions_all_products(self, message: str) -> bool:
+        lowered = (message or "").lower()
+        return (
+            "all products" in lowered
+            or "all the products" in lowered
+            or "all the product" in lowered
+            or ("all" in lowered and "product" in lowered)
+        )
+
+    def _requested_monitoring_kinds(self, message: str) -> set:
+        """
+        Infer which monitoring domains the user asked for.
+        Returns a subset of {'stock', 'price'}.
+        """
+        lowered = (message or "").lower()
+        wants_both = any(
+            phrase in lowered
+            for phrase in (
+                "all monitoring",
+                "both monitoring",
+                "stock and price",
+                "price and stock",
+                "stock & price",
+                "price & stock",
+                "both stock and price",
+                "both price and stock",
+            )
+        )
+        is_stock = any(kw in lowered for kw in ("stock", "quantity", "inventory", "qty"))
+        is_price = any(kw in lowered for kw in ("price", "margin", "profit"))
+
+        if wants_both:
+            return {"stock", "price"}
+        if is_stock and is_price:
+            # e.g. "stock and price monitoring" without exact phrase match above
+            if " and " in lowered or " & " in lowered or "both" in lowered:
+                return {"stock", "price"}
+            # Prefer the first-mentioned domain for ambiguous overlap
+            stock_pos = min(
+                (lowered.find(kw) for kw in ("stock", "quantity", "inventory", "qty") if kw in lowered),
+                default=10**9,
+            )
+            price_pos = min(
+                (lowered.find(kw) for kw in ("price", "margin", "profit") if kw in lowered),
+                default=10**9,
+            )
+            return {"stock"} if stock_pos <= price_pos else {"price"}
+        if is_stock:
+            return {"stock"}
+        if is_price:
+            return {"price"}
+        # Unqualified "monitoring" (no stock/price) → both
+        if "monitoring" in lowered or "monitor" in lowered:
+            return {"stock", "price"}
+        return set()
+
+    def _filter_tool_calls_to_user_intent(
+        self, user_message: str, tool_calls: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Drop tool calls the LLM added beyond what the user asked for."""
+        kinds = self._requested_monitoring_kinds(user_message)
+        if not kinds or kinds == {"stock", "price"}:
+            return tool_calls
+
+        allowed_names = set()
+        if "stock" in kinds:
+            allowed_names.add("stock_monitoring")
+        if "price" in kinds:
+            allowed_names.add("price_monitoring")
+
+        filtered: List[Dict[str, Any]] = []
+        dropped: List[str] = []
+        for tool_call in tool_calls:
+            name = tool_call.get("function", {}).get("name", "")
+            if name in ("stock_monitoring", "price_monitoring") and name not in allowed_names:
+                dropped.append(name)
+                continue
+            filtered.append(tool_call)
+
+        if dropped:
+            print(
+                f"[PRODUCTS AGENT] ✂️ Dropped extra tool call(s) {dropped} "
+                f"(user intent={sorted(kinds)})"
+            )
+        return filtered or tool_calls
+
     def _build_monitoring_fallback_tool_call(self, state: AgentState) -> Optional[List[Dict[str, Any]]]:
         """
         Deterministic fallback when the LLM returns text instead of a tool call
@@ -113,23 +204,23 @@ class ProductsAgent(BaseAgent):
         selected_product_ids = state.get("userContext", {}).get("selected_product_ids", []) or []
         message = (state.get("userMessage") or "").lower()
 
-        is_stock = any(kw in message for kw in ["stock", "quantity", "inventory", "qty"])
-        is_price = any(kw in message for kw in ["price", "margin", "profit"])
-        if not is_stock and not is_price:
+        kinds = self._requested_monitoring_kinds(message)
+        if len(kinds) != 1:
+            # Fallback only synthesizes a single-domain call; both-tools path stays LLM-driven.
+            if kinds != {"stock", "price"}:
+                return None
+            # For unqualified both, don't invent dual calls here.
             return None
-        # Prefer the more specific domain when both words appear
-        if is_stock and is_price:
-            if "price" in message or "margin" in message:
-                is_stock = False
-            else:
-                is_price = False
+
+        is_stock = "stock" in kinds
+        is_price = "price" in kinds
 
         is_disable = self._is_disable_request(message)
         is_enable = self._is_enable_request(message) and not is_disable
         if not is_disable and not is_enable:
             return None
 
-        apply_to_all = "all products" in message or ("all" in message and "product" in message)
+        apply_to_all = self._mentions_all_products(message)
         if not apply_to_all and not selected_product_ids:
             return None
 
@@ -163,25 +254,28 @@ class ProductsAgent(BaseAgent):
                 },
             }]
 
-        print(
-            f"[PRODUCTS AGENT] 🛠️ Fallback tool call: price_monitoring "
-            f"(disable={is_disable}, all={apply_to_all}, threshold={threshold})"
-        )
-        return [{
-            "id": f"fallback_{uuid.uuid4().hex[:8]}",
-            "type": "function",
-            "function": {
-                "name": "price_monitoring",
-                "arguments": {
-                    "productIds": product_ids,
-                    "bulkPriceMonitoring": {
-                        "isApplyToAllProducts": apply_to_all,
-                        "isPriceEnabled": not is_disable,
-                        "priceThresholdPercentage": float(threshold),
+        if is_price:
+            print(
+                f"[PRODUCTS AGENT] 🛠️ Fallback tool call: price_monitoring "
+                f"(disable={is_disable}, all={apply_to_all}, threshold={threshold})"
+            )
+            return [{
+                "id": f"fallback_{uuid.uuid4().hex[:8]}",
+                "type": "function",
+                "function": {
+                    "name": "price_monitoring",
+                    "arguments": {
+                        "productIds": product_ids,
+                        "bulkPriceMonitoring": {
+                            "isApplyToAllProducts": apply_to_all,
+                            "isPriceEnabled": not is_disable,
+                            "priceThresholdPercentage": float(threshold),
+                        },
                     },
                 },
-            },
-        }]
+            }]
+
+        return None
 
     def _llm_asked_for_product_ids(self, content: str) -> bool:
         if not content:
@@ -248,6 +342,7 @@ class ProductsAgent(BaseAgent):
     def _process_tool_calls(self, state: AgentState, tool_calls: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Apply confirmation rules and return the next agent state update."""
         user_message = (state.get("userMessage") or "").lower()
+        tool_calls = self._filter_tool_calls_to_user_intent(user_message, tool_calls)
         needs_all_products_confirmation = False
 
         for i, tool_call in enumerate(tool_calls):
@@ -269,7 +364,7 @@ class ProductsAgent(BaseAgent):
             if isinstance(product_ids, str) and product_ids.lower() == "all":
                 is_apply_to_all = True
 
-            if "all products" in user_message:
+            if self._mentions_all_products(user_message):
                 is_apply_to_all = True
 
             if is_apply_to_all:

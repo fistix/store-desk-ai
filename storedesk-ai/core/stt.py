@@ -25,18 +25,15 @@ def load_whisper_model():
 
 async def transcribe_audio(audio_bytes: bytes, format: str = "webm") -> str:
     """
-    Transcribe audio using Vosk with fallback
-    Args:
-        audio_bytes: Raw audio data
-        format: Audio format (webm, wav, mp3, etc.)
-    Returns:
-        Transcribed text
+    Transcribe audio using Vosk with SpeechRecognition fallback.
     """
     if stt_instance is None:
         raise HTTPException(status_code=503, detail="Speech-to-text not available")
-    
+
     try:
         return stt_instance.transcribe_audio(audio_bytes, format)
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"[STT] ❌ Transcription failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}") from e
